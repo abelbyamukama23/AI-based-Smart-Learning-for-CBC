@@ -1,0 +1,65 @@
+# ── Secrets & Environment ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── Django ────────────────────────────────────────────────────────────────────
+*.sqlite3
+db.sqlite3
+*.log
+local_settings.py
+media/
+staticfiles/
+static_root/
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.cache/
+frontend/build/
+frontend/dist/
+node_modules/
+.npm
+*.lock
+
+# ── IDE & OS ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Temporary / Test files ────────────────────────────────────────────────────
+err_test.json
+response.json
+response2.json
+final_test.json
+*.tmp
+*.bak
+
+# ── MCP / Vector DB ───────────────────────────────────────────────────────────
+mcp_server/__pycache__/
+*.chroma/
+chroma_db/

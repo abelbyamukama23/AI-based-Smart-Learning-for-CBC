@@ -1,0 +1,689 @@
+
+--- Page 1 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+CBC Digital Learning Platform
+Stage F — Database & Data Design
+ERD · Relational Schema · Data Dictionary · Sync Strategy
+StageF:Database&DataDesign←Current
+CBCDigitalLearningPlatform|StageF|Page1of22
+--- Page 2 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+1. Introduction
+1.1 Purpose of Stage F
+Stage F of the Unified Software Architectural Process — Database & Data Design — derives the full
+relational database schema from the domain model produced in Stage C. Where Stage C identified the
+domain entities and their conceptual relationships, Stage F translates those entities into concrete
+database tables, columns, data types, constraints, indices, and foreign key relationships suitable for
+implementation in PostgreSQL on AWS RDS.
+This document constitutes the complete Data Design deliverable for the CBC Digital Learning Platform.
+It includes the Entity Relationship Diagram (ERD) in crow's foot notation, the full relational schema with
+a data dictionary for every table, and the data storage and offline synchronisation strategy.
+1.2 Inheritance Pattern Decision
+The User hierarchy (User → Learner, Teacher, MoESOfficial) and Content hierarchy (Content →
+Lesson, TeacherMaterial) are implemented using Joined Table Inheritance. This means a base table
+(users, content) holds all shared columns, and each subclass has its own extension table with a
+primary key that is simultaneously a foreign key back to the base table. This pattern:
+• Eliminates NULL columns that would appear in Single Table Inheritance
+• Aligns exactly with Django's multi-table inheritance ORM, requiring no custom mapping
+• Keeps each table's responsibility clear and query-able independently
+• Maintains referential integrity at the database level
+1.3 Design Conventions
+• All primary keys use UUID (gen_random_uuid()) — avoids integer sequence exposure in URLs
+and supports future distributed sharding
+• All timestamps use TIMESTAMPTZ (timestamp with time zone) stored in UTC — correct for a
+Uganda-deployed platform accessed from multiple time zones
+• Soft deletes: sensitive tables (users, posts) use is_active / is_deleted flags rather than physical
+deletion, preserving audit trails
+• All ENUM types are defined as PostgreSQL custom ENUM types for type safety
+• Junction tables use composite primary keys (both FKs combined) to enforce uniqueness at the
+DB level
+• Indices are defined on all foreign keys and all frequently-filtered columns per the query patterns
+in the SRS
+CBCDigitalLearningPlatform|StageF|Page2of22
+--- Page 3 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+2. Entity Relationship Diagram
+2.1 ERD — Crow's Foot Notation
+Figure F-01 presents the complete Entity Relationship Diagram for the CBC Digital Learning Platform.
+The diagram uses crow's foot notation: a single perpendicular bar denotes "one", double bars denote
+"one and only one" (mandatory), and the crow's foot (three-pronged fork) denotes "many". Colour
+bands group tables by domain layer.
+FigureF-01:CBCDigitalLearningPlatform—EntityRelationshipDiagram(Crow'sFootNotation,PostgreSQL)
+2.2 Table Inventory
+The schema comprises 21 tables across five groups:
+Group Tables Count
+UserHierarchy users,learners,teachers,moes_officials 4
+ContentHierarchy+ content,lessons,teacher_materials,subjects, 6
+CBCStructure class_levels,competencies
+LearnerInteraction posts,comments,reactions,collaborative_sessions, 7
+competency_progress,ai_sessions,offline_cache
+AI/MoES/Supporting knowledge_base,reports,schools 3
+Junction+Sync session_participants,content_competencies, 3
+offline_sync_log
+CBCDigitalLearningPlatform|StageF|Page3of22
+--- Page 4 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+3. Relational Schema & Data Dictionary
+Each table below shows the full column specification, data type, constraints, index, and a description of
+every column. PK = Primary Key. FK = Foreign Key. UQ = Unique constraint. NN = NOT NULL.
+3.1 User Hierarchy Tables
+Table: users
+users
+ColumnName DataType Constraints Index Description
+user_id UUID PK,NN PRIMARY System-wideuniqueidentifier
+foreveryaccount
+username VARCHAR(50) NN,UQ UQ Uniqueloginnamechosenat
+registration
+password_hash VARCHAR(255) NN — bcrypt-hashedpassword.Plain
+textneverstored(NFR-SEC-
+03)
+role ENUM NN IDX Values:LEARNER,TEACHER,
+ADMIN.Controlsroutingand
+permissions
+created_at TIMESTAMPTZ NN, — Timestampofaccountcreation
+DEFAULT (UTC)
+NOW()
+is_active BOOLEAN NN, IDX Soft-deleteflag.FALSE=
+DEFAULT accountdeactivated,not
+TRUE deleted
+Table: learners
+learners
+ColumnName DataType Constraints Index Description
+learner_id UUID PK,FK→ PRIMARY 1:1withusers.JoinedTable
+users.user_id Inheritanceextension
+school_id UUID FK→ IDX Learner'sregisteredschool
+schools.school_id,
+NN
+class_level ENUM NN IDX Values:S1,S2,S3,S4,S5,
+S6.Currentyeargroup
+enrolled_at TIMESTAMPTZ NN,DEFAULT — Datelearnerwasregistered
+NOW() ontheplatform
+Table: teachers
+teachers
+ColumnName DataType Constraints Index Description
+teacher_id UUID PK,FK→ PRIMARY 1:1withusers.Joined
+users.user_id TableInheritance
+CBCDigitalLearningPlatform|StageF|Page4of22
+--- Page 5 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+teachers
+ColumnName DataType Constraints Index Description
+extension
+school_id UUID FK→ IDX Teacher'sregistered
+schools.school_id, school
+NN
+subjects_taught TEXT[] — — PostgreSQLarrayofCBC
+subjectnamestheteacher
+covers
+joined_at TIMESTAMPTZ NN,DEFAULT — Dateteacherwas
+NOW() registeredontheplatform
+Table: moes_officials
+moes_officials
+ColumnName DataType Constraints Index Description
+official_id UUID PK,FK→ PRIMARY 1:1withusers.JoinedTable
+users.user_id Inheritanceextension
+department VARCHAR(100) NN — MinistrydepartmentorNCDC
+divisionname
+access_level ENUM NN IDX Values:STANDARD,SENIOR.
+Controlsanalyticsandcontent
+accesstiers
+assigned_at TIMESTAMPTZ NN, — Dateofficialwasprovisioned
+DEFAULT ontheplatform
+NOW()
+is_active BOOLEAN NN, IDX Soft-deleteflagforofficial
+DEFAULT accounts
+TRUE
+CBCDigitalLearningPlatform|StageF|Page5of22
+--- Page 6 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+3.2 Content Hierarchy + CBC Structure Tables
+Table: content
+content
+ColumnName DataType Constraints Index Description
+content_id UUID PK,NN PRIMARY Uniqueidentifierforall
+contentitems(base
+table)
+title VARCHAR(255) NN IDX Displaytitleofthe
+contentitem
+description TEXT — — Briefsummaryofthe
+learningobjective
+subject_id UUID FK→ IDX CBCsubjectthiscontent
+subjects.subject_id, belongsto
+NN
+class_level_id UUID FK→ IDX Targetclasslevel
+class_levels.level_id, (S1–S6)
+NN
+created_at TIMESTAMPTZ NN,DEFAULT — Creationtimestamp
+NOW() (UTC)
+modified_at TIMESTAMPTZ NN,DEFAULT — Lastmodification
+NOW() timestamp(UTC).
+Updatedoneveryedit
+content_type ENUM NN IDX Values:LESSON,
+MATERIAL.
+Discriminatorforjoined
+inheritance
+Table: lessons
+lessons
+ColumnName DataType Constraints Index Description
+lesson_id UUID PK,FK→ PRIMARY 1:1withcontent.Extension
+content.content_id tableforNCDClessons
+source VARCHAR(50) NN,DEFAULT — Contentauthority.Always
+'NCDC' NCDCforofficialcurriculum
+lessons
+is_downloadable BOOLEAN NN,DEFAULT IDX Whetherthislessonmaybe
+TRUE cachedforofflineaccess
+file_size_kb INTEGER — — CompressedsizeinKB.
+Usedby
+OfflineSyncServicefor
+storagemanagement
+body_html TEXT — — Fulllessoncontentin
+sanitisedHTMLforbrowser
+rendering
+CBCDigitalLearningPlatform|StageF|Page6of22
+--- Page 7 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+Table: teacher_materials
+teacher_materials
+ColumnName DataType Constraints Index Description
+material_id UUID PK,FK→ PRIMARY 1:1withcontent.
+content.content_id Extensiontablefor
+teacheruploads
+teacher_id UUID FK→ IDX Authoringteacher
+teachers.teacher_id,
+NN
+shared_with_learners BOOLEAN NN,DEFAULT IDX Controlsvisibilityto
+FALSE learners.FALSE=
+teacher-onlyview
+resource_type VARCHAR(80) — — Descriptor:study
+guide,pastpaper,
+notes,worksheet,etc.
+file_url TEXT — — S3presignedURLor
+pathtouploadedfile
+Table: subjects
+subjects
+ColumnName DataType Constraints Index Description
+subject_id UUID PK,NN PRIMARY UniqueidentifierforeachCBC
+subject
+subject_name VARCHAR(100) NN,UQ UQ OfficialCBCsubjectname(e.g.
+Mathematics,Biology,History)
+is_active BOOLEAN NN, IDX Softflag.FALSEremoves
+DEFAULT subjectfromlearnerand
+TRUE teacherviews
+Table: class_levels
+class_levels
+ColumnName DataType Constraints Index Description
+level_id UUID PK,NN PRIMARY Uniqueidentifierforeachclass
+level
+level_name ENUM NN,UQ UQ Values:S1,S2,S3,S4,S5,S6
+sort_order SMALLINT NN IDX Integer1–6fororderinglevelsin
+UIandreports
+Table: competencies
+competencies
+ColumnName DataType Constraints Index Description
+competency_id UUID PK,NN PRIMARY Uniqueidentifierfor
+CBCDigitalLearningPlatform|StageF|Page7of22
+--- Page 8 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+competencies
+ColumnName DataType Constraints Index Description
+eachCBCcompetency
+subject_id UUID FK→ IDX Subjectthatownsthis
+subjects.subject_id, competency
+NN (composition)
+level_id UUID FK→ IDX Classlevelthis
+class_levels.level_id, competencytargets
+NN
+competency_name VARCHAR(200) NN IDX OfficialCBC
+competencyname
+description TEXT — — Detaileddescriptionof
+theexpectedlearning
+outcome
+CBCDigitalLearningPlatform|StageF|Page8of22
+--- Page 9 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+3.3 Learner Interaction Tables
+Table: posts
+posts
+ColumnName DataType Constraints Index Description
+post_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+learnerpost
+author_id UUID FK→ IDX Learnerwhocreatedthe
+learners.learner_id, post
+NN
+content TEXT NN — Bodytextoftheinsight,
+idea,orresearch
+contribution
+visibility ENUM NN,DEFAULT IDX Values:PRIVATE,
+'PRIVATE' PEERS,TEACHERS,
+PUBLIC(NFR-SEC-05)
+date_posted TIMESTAMPTZ NN,DEFAULT IDX Creationtimestamp.
+NOW() Indexedfortimelinesorting
+is_deleted BOOLEAN NN,DEFAULT IDX Soft-deleteflag.Preserves
+FALSE contentformoderation
+audit
+Table: comments
+comments
+ColumnName DataType Constraints Index Description
+comment_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+comment
+post_id UUID FK→ IDX Postthiscommentbelongs
+posts.post_id,NN to(compositionchild)
+author_id UUID FK→ IDX Learnerwhowrotethe
+learners.learner_id, comment
+NN
+text TEXT NN — Bodytextofthecomment
+date_posted TIMESTAMPTZ NN,DEFAULT IDX Creationtimestamp
+NOW()
+Table: reactions
+reactions
+ColumnName DataType Constraints Index Description
+reaction_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+reaction
+learner_id UUID FK→ IDX Learnerwhomadethe
+learners.learner_id, reaction
+NN
+CBCDigitalLearningPlatform|StageF|Page9of22
+--- Page 10 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+reactions
+ColumnName DataType Constraints Index Description
+post_id UUID FK→ IDX Postbeingreactedto
+posts.post_id,NN
+type ENUM NN IDX Values:LIKE,SHARE
+date_reacted TIMESTAMPTZ NN,DEFAULT — Reactiontimestamp
+NOW()
+Note: A composite UNIQUE constraint on (learner_id, post_id, type) prevents duplicate reactions of the
+same type by the same learner on the same post.
+Table: collaborative_sessions
+collaborative_sessions
+ColumnName DataType Constraints Index Description
+session_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+collaborativesession
+title VARCHAR(200) NN — Displaynameofthe
+session
+start_time TIMESTAMPTZ NN IDX Scheduledoractualstart
+time
+end_time TIMESTAMPTZ — — Actualendtime.NULL
+whilesessionisACTIVE
+status ENUM NN,DEFAULT IDX Values:ACTIVE,CLOSED
+'ACTIVE'
+created_by UUID FK→ IDX Learnerwhoinitiatedthe
+learners.learner_id, session
+NN
+Table: competency_progress
+competency_progress
+ColumnName DataType Constraints Index Description
+progress_id UUID PK,NN PRIMARY Uniqueidentifier
+foreachprogress
+record
+learner_id UUID FK→learners.learner_id,NN IDX Owninglearner
+(composition
+child)
+competency_id UUID FK→ IDX Competency
+competencies.competency_id, beingtracked
+NN
+attainment_level ENUM NN,DEFAULT IDX Values:
+'NOT_STARTED' NOT_STARTED,
+IN_PROGRESS,
+ATTAINED
+last_updated TIMESTAMPTZ NN,DEFAULTNOW() — Timestampoflast
+CBCDigitalLearningPlatform|StageF|Page10of22
+--- Page 11 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+competency_progress
+ColumnName DataType Constraints Index Description
+attainment
+update
+Note: A composite UNIQUE constraint on (learner_id, competency_id) ensures each learner has
+exactly one progress record per competency.
+Table: ai_sessions
+ai_sessions
+ColumnName DataType Constraints Index Description
+session_id UUID PK,NN PRIMARY Uniqueidentifierfor
+eachAIinteraction
+learner_id UUID FK→ IDX Learnerwhoinitiated
+learners.learner_id, thequery
+NN
+query TEXT NN — Theacademic
+questionsubmittedby
+thelearner
+response TEXT — — TheAITutor's
+contextualised
+response.NULLif
+flaggedoutofscope
+flagged_out_of_scope BOOLEAN NN,DEFAULT IDX TRUEifthequeryfell
+FALSE outsidetheknowledge
+base(FR-AI-05)
+timestamp TIMESTAMPTZ NN,DEFAULT IDX Interactiontimestamp.
+NOW() Indexedforsession
+historyqueries
+kb_version VARCHAR(20) — — Versionofknowledge
+baseusedtoanswer
+thisquery.Audittrail
+Table: offline_cache
+offline_cache
+ColumnName DataType Constraints Index Description
+cache_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+cacherecord
+learner_id UUID FK→ IDX Learnerwhoownsthis
+learners.learner_id, cachedlesson
+NN
+lesson_id UUID FK→ IDX Lessonthathasbeen
+lessons.lesson_id, cached
+NN
+cached_at TIMESTAMPTZ NN,DEFAULT IDX Whenthelessonwas
+NOW() downloadedforoffline
+CBCDigitalLearningPlatform|StageF|Page11of22
+--- Page 12 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+offline_cache
+ColumnName DataType Constraints Index Description
+use
+storage_size_kb INTEGER — — Sizeofthecachedbundle
+onthedevice(KB)
+sync_status ENUM NN,DEFAULT IDX Values:PENDING
+'SYNCED' (downloadinprogress),
+SYNCED(complete)
+CBCDigitalLearningPlatform|StageF|Page12of22
+--- Page 13 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+3.4 AI / MoES / Supporting Tables
+Table: knowledge_base
+knowledge_base
+ColumnName DataType Constraints Index Description
+kb_id UUID PK,NN PRIMARY Uniqueidentifierforthe
+knowledgebaseinstance
+record
+version VARCHAR(20) NN — Semanticversionofthe
+knowledgebasecontent(e.g.
+1.0.3)
+last_synced_at TIMESTAMPTZ NN IDX Timestampofthemostrecent
+MCPcontentsynchronisation
+mcp_endpoint TEXT NN — URLoftheMCPserver
+endpointusedbytheAITutor
+service
+content_count INTEGER NN, — Totalnumberofcontentrecords
+DEFAULT0 indexedintheknowledgebase
+is_active BOOLEAN NN, IDX Onlyonerecordshouldbe
+DEFAULT activeatatime
+TRUE
+Table: reports
+reports
+ColumnName DataType Constraints Index Description
+report_id UUID PK,NN PRIMARY Uniqueidentifierfor
+eachgenerated
+report
+generated_by UUID FK→ IDX MoES/NCDCofficial
+moes_officials.official_id, whogeneratedthe
+NN report
+date_generated TIMESTAMPTZ NN,DEFAULTNOW() IDX Generation
+timestamp
+filters JSONB — — Serialisedfilter
+parameters:date
+range,region,
+subject,school
+format ENUM NN — Values:PDF,CSV.
+Exportformat
+selectedat
+generationtime
+file_url TEXT — — S3presignedURLfor
+download.NULLuntil
+Celerytask
+completes
+Table: schools
+CBCDigitalLearningPlatform|StageF|Page13of22
+--- Page 14 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+schools
+ColumnName DataType Constraints Index Description
+school_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+registeredschool
+school_name VARCHAR(200) NN,UQ UQ Officialschoolname
+region VARCHAR(100) NN IDX Ugandaadministrativeregion
+(e.g.Western,Northern)
+district VARCHAR(100) NN IDX Ugandadistrict.Usedfor
+analyticsregionalfiltering(FR-
+M-03)
+is_active BOOLEAN NN, IDX Softflag.Inactiveschoolsare
+DEFAULT hiddenfromregistration
+TRUE
+CBCDigitalLearningPlatform|StageF|Page14of22
+--- Page 15 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+3.5 Junction & Sync Tables
+Table: session_participants
+session_participants
+Column
+DataType Constraints Index Description
+Name
+learner_id UUID PK(composite),FK→ COMPOSITE Learner
+learners.learner_id PK participatingin
+thesession
+session_id UUID PK(composite),FK→ COMPOSITE Sessionthe
+collaborative_sessions.session_id PK learneris
+participatingin
+joined_at TIMESTAMPTZ NN,DEFAULTNOW() — Timestamp
+whenthe
+learnerjoined
+thesession
+Table: content_competencies
+content_competencies
+ColumnName DataType Constraints Index Description
+content_id UUID PK(composite),FK→ COMPOSITE Contentitem
+content.content_id PK beingtagged
+competency_id UUID PK(composite),FK→ COMPOSITE Competency
+competencies.competency_id PK being
+associatedwith
+thecontent
+tagged_at TIMESTAMPTZ NN,DEFAULTNOW() — Whenthe
+competency
+tagwasapplied
+tothiscontent
+Table: offline_sync_log
+offline_sync_log
+ColumnName DataType Constraints Index Description
+sync_id UUID PK,NN PRIMARY Uniqueidentifierforeach
+syncoperationlogentry
+learner_id UUID FK→ IDX Learnerwhosedevice
+learners.learner_id, performedthesync
+NN
+synced_at TIMESTAMPTZ NN,DEFAULT IDX Timestampofthesync
+NOW() attempt
+bundle_version VARCHAR(20) NN — Versionofthecontent
+bundlethatwassynced
+items_synced INTEGER NN,DEFAULT0 — Numberoflessonitems
+syncedinthisoperation
+CBCDigitalLearningPlatform|StageF|Page15of22
+--- Page 16 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+offline_sync_log
+ColumnName DataType Constraints Index Description
+status ENUM NN IDX Values:SUCCESS,
+FAILED.Enablesretry
+logicinOfflineSyncService
+error_message TEXT — — NULLonSUCCESS.Error
+detailonFAILEDfor
+debugging
+CBCDigitalLearningPlatform|StageF|Page16of22
+--- Page 17 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+4. Data Flow & Offline Sync Strategy
+4.1 Overview Diagram
+Figure F-02 presents the complete data flow for both online and offline paths, the five-step offline sync
+process, the storage allocation strategy by data type, and the feature availability matrix per connectivity
+state.
+FigureF-02:CBCDigitalLearningPlatform—DataFlow&OfflineSyncStrategy
+4.2 Online Data Flow
+In normal connected operation, the learner's React SPA communicates with the Django API over
+HTTPS via CloudFront and the Application Load Balancer. The Django backend reads and writes to
+PostgreSQL via the ORM for all persistent domain data, reads from and writes to Redis for session
+tokens, Celery task brokering, and WebSocket channel state, and reads from and writes to S3 for
+media files and generated reports. All static assets and the SPA build are served from S3 via
+CloudFront edge nodes, minimising latency for learners in Uganda relative to the AWS af-south-1
+origin.
+4.3 Offline Sync Flow
+The offline sync process is a five-step sequence initiated by the learner while connected:
+• Step 1 — Request: The learner taps "Download Lesson" in the LearnerApp UI while online. The
+request hits /api/v1/content/offline-bundle/ with the lesson ID.
+• Step 2 — Package: The OfflineSyncService in Django retrieves the lesson body, associated
+assets, and metadata from PostgreSQL and S3, and packages them into a self-contained HTML
+bundle.
+• Step 3 — Store: The bundle is saved to the S3 offline bundles prefix. An offline_cache record is
+written to PostgreSQL with sync_status = SYNCED. An offline_sync_log entry is created.
+• Step 4 — Deliver: The bundle URL is returned to the React SPA. The PWA Service Worker
+intercepts the response and stores the bundle in browser IndexedDB.
+CBCDigitalLearningPlatform|StageF|Page17of22
+--- Page 18 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+• Step 5 — Offline access: When the learner's device loses connectivity, the Service Worker
+intercepts all fetch requests for cached lessons and serves directly from IndexedDB. The UI
+displays an offline mode indicator (NFR-O-02). AI tutor, posting, and collaboration features are
+disabled with clear messaging (NFR-O-03).
+4.4 Storage Strategy
+DataType StorageEngine AccessPattern SRSRef
+Userprofiles,posts, PostgreSQLRDS CRUDviaDjangoORM, FR-L-01toFR-L-
+lessons,progress ACIDtransactions 09
+JWTtokens,refreshtoken RedisElastiCache TTL-basedkeyexpiry NFR-SEC-03,
+blacklist (access:5min,refresh:7 NFR-SEC-04
+days)
+Ratelimitingcounters RedisElastiCache Atomicincrementwith NFR-S-01
+slidingwindowTTL
+WebSocketchannelstate RedisElastiCache DjangoChannelspub/sub FR-L-08
+layer
+Celerytaskqueue RedisElastiCache In-memorytaskdispatch, NFR-A-01
+(asbroker) resultbackend
+PostgreSQL
+Uploadedmedia(teacher AWSS3+ PresignedURLupload; FR-T-02,NFR-P-
+materials) CloudFront CDNdeliverytolearners 03
+Offlinelessoncontent S3(server)+ Builtonrequest;browser FR-L-04,NFR-O-
+bundles IndexedDB serviceworkercaches 01
+(browser)
+Reportexportfiles(PDF, AWSS3 Celery-asyncgeneration; FR-M-04
+CSV) presignedURLdownload
+AIsessionlogs PostgreSQL Append-onlywrites; FR-AI-01,NFR-
+ai_sessionstable privatereadbyowning SEC-05
+learner
+NCDCknowledgebase PostgreSQL(via Read-onlybyAIlayer; FR-AI-02,FR-AI-
+content MCPServer) updatedbyMoES/NCDC 03
+admin
+ReactSPAstaticbuild AWSS3+ Deployedonceper NFR-P-01,NFR-
+CloudFront release;CDNcached AC-01
+globally
+CBCDigitalLearningPlatform|StageF|Page18of22
+--- Page 19 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+5. Index Strategy
+Beyond primary key indices, the following additional indices are defined to support the platform's most
+frequent query patterns as derived from the SRS requirements and the API endpoint contracts in Stage
+E:
+Table IndexColumns QueryPatternServed
+users username Loginlookupbyusername(FR-L-02)
+users role Role-basedaccessfiltering(NFR-SEC-
+04)
+learners school_id School-scopedanalyticsqueries(FR-M-
+03)
+content subject_id,class_level_id CBC-filteredcontentlisting(FR-L-03)
+content content_type Discriminatorfilterforjoinedinheritance
+queries
+lessons is_downloadable Offline-eligiblelessonlisting(FR-L-04)
+teacher_materials teacher_id, Teachermaterialfeedforlearners(FR-
+shared_with_learners T-04)
+posts author_id,date_posted Learnerposttimeline(FR-L-07)
+posts visibility,date_posted Peer/publicpostfeedqueries(FR-L-07,
+FR-L-11)
+competency_progress learner_id,attainment_level Learnerprogressdashboardqueries
+(FR-L-09)
+ai_sessions learner_id,timestamp AIsessionhistoryperlearner(FR-AI-01,
+NFR-SEC-05)
+competencies subject_id,level_id Competencylistingbysubject+level
+(FR-L-09)
+offline_cache learner_id,sync_status Offlinecontentbundlelistingperlearner
+(NFR-O-01)
+schools region,district Regionalanalyticsaggregation(FR-M-
+03)
+CBCDigitalLearningPlatform|StageF|Page19of22
+--- Page 20 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+6. Traceability to Stage C & SRS
+StageCEntity StageFTable(s) KeyDesignDecision SRSRef
+User(abstract) users Basetableforjoined FR-L-01,NFR-
+inheritance;UUIDPK; SEC-03
+bcrypthashcolumn
+Learner learners Extensiontable;FK=PK FR-Lseries
+backtousers;school_id
+FK
+Teacher teachers Extensiontable; FR-Tseries
+subjects_taughtasTEXT[]
+array
+MoESOfficial moes_officials Extensiontable; FR-Mseries
+access_levelENUMfor
+governancetiers
+Content(abstract) content Basetable;content_type FR-L-03,FR-T-02
+discriminatorcolumn
+added
+Lesson lessons Extensiontable; FR-L-03,FR-L-04
+body_htmlcolumnfor
+offlinerendering
+TeacherMaterial teacher_materials Extensiontable;file_urlfor FR-T-02,FR-T-03
+S3reference
+Subject subjects Standalonereference FR-L-03
+table;subject_nameUQ
+ClassLevel class_levels Standalone;ENUM+ FR-L-03
+sort_orderforordered
+display
+Competency competencies FKtobothsubjectsand FR-L-09
+class_levels;composition
+enforced
+Post posts visibilityENUMdefault FR-L-06,NFR-
+PRIVATE;is_deletedsoft SEC-05
+flag
+Comment comments FKtobothpostsand FR-L-07
+learners;append-only
+Reaction reactions CompositeUQ(learner_id, FR-L-07
+post_id,type)prevents
+duplicates
+CollaborativeSession collaborative_sessions M:Mwithlearnersvia FR-L-08
+session_participants
+junction
+CompetencyProgress competency_progress UQ(learner_id, FR-L-09
+competency_id)ensures
+onerecordperpair
+AISession ai_sessions kb_versioncolumnadded FR-AI-01toFR-AI-
+foraudittrailperquery 05
+OfflineCache offline_cache sync_statusENUMfor FR-L-04,NFR-O-
+PWAsyncstate 01
+management
+CBCDigitalLearningPlatform|StageF|Page20of22
+--- Page 21 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+StageCEntity StageFTable(s) KeyDesignDecision SRSRef
+KnowledgeBase knowledge_base is_activeflag; FR-AI-03
+mcp_endpointstoredfor
+AITutorrouting
+Report reports filtersasJSONBfor FR-M-04
+flexiblequeryparameters;
+file_urlforS3
+(Implied:school) schools Supportingtableforschool FR-M-03
+registration;region+
+districtforanalytics
+(M:M:Learner↔ session_participants Junctiontable;composite FR-L-08
+Session) PKenforcesuniqueness
+(M:M:Content↔ content_competencies Junctiontable;replaces FR-L-03,FR-L-09
+Competency) List<UUID>
+competencyIdsfromStage
+C
+CBCDigitalLearningPlatform|StageF|Page21of22
+--- Page 22 ---
+CBCDigitalLearningPlatform|StageF—Database&DataDesign|v1.0
+7. Document Sign-off
+This Database & Data Design document represents the agreed baseline schema for the CBC Digital
+Learning Platform following completion of Stage F. All implementation of the PostgreSQL schema on
+AWS RDS shall conform to the tables, columns, data types, constraints, and index specifications
+defined in this document.
+Stage G (UI/UX Design) and Stage H (Architecture Validation & Review) shall proceed with reference
+to this schema as the authoritative data layer specification.
+Role Name Signature/Date
+ProjectSupervisor ___________________________ ___________________________
+SoftwareArchitect/GroupLeader ___________________________ ___________________________
+DatabaseDesigner ___________________________ ___________________________
+CBCDigitalLearningPlatform|StageF|Page22of22

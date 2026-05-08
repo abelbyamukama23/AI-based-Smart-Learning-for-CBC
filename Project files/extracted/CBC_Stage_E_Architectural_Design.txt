@@ -1,0 +1,428 @@
+
+--- Page 1 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+CBC Digital Learning Platform
+Stage E — Architectural Design
+Software Architecture Document (SAD)
+Version 1.0 | April 2026 | Draft — Design Phase
+Prepared by: Project Team — End of Year Project
+Uganda Institute of ICT (UICT)
+UnifiedSoftwareArchitecturalProcess
+StageE:ArchitecturalDesign
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page1of14
+--- Page 2 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+1. Introduction
+1.1 Purpose of Stage E
+Stage E of the Unified Software Architectural Process — Architectural Design — builds directly on the
+behavioural models produced in Stage D. Where Stage D defined how objects interact and transition
+over time, Stage E defines where those objects and interactions live: the structural blueprint of the
+system, how components are assembled, how they communicate, and how they are deployed in a real-
+world cloud environment.
+This document — the Software Architecture Document (SAD) — is the authoritative output of Stage E.
+It establishes the architectural decisions that will govern all subsequent stages, including database
+design (Stage F) and UI/UX design (Stage G).
+1.2 Architectural Goals
+The CBC Digital Learning Platform architecture is designed to satisfy the following goals derived
+directly from the SRS v1.0:
+• Serve 100,000 concurrent learners nationally without degradation (NFR-S-01, NFR-S-02)
+• Operate reliably on 2G/3G connectivity in rural Uganda (NFR-P-01, NFR-P-03)
+• Support offline lesson access through a progressive web application strategy (NFR-O-01 to
+NFR-O-03)
+• Ground AI tutor responses in NCDC domestic curriculum content via MCP (FR-AI-02, FR-AI-03)
+• Enforce strict role-based access control and learner data privacy by default (NFR-SEC-04,
+NFR-SEC-05)
+• Maintain 99% uptime during school hours with graceful degradation of the AI layer (NFR-A-01,
+NFR-A-03)
+1.3 Architectural Approach: Layered Monolith
+The platform adopts a Layered Monolith architecture. This decision is deliberate and appropriate for the
+following reasons:
+• Prototype and academic scope: a monolith delivers the full system without the operational
+overhead of service orchestration, container registries, and inter-service networking that
+microservices demand.
+• Single deployment unit: the entire backend deploys as one Django application, simplifying
+CI/CD pipelines, debugging, and academic assessment.
+• Clear layer separation: the monolith is internally structured into four strict layers — Presentation,
+Application, AI, and Data — which enforces clean separation of concerns while keeping
+integration simple.
+• Upgrade path: the layered structure allows the AI layer and individual application services to be
+extracted into standalone microservices in future phases without rewriting business logic.
+The four layers are: Presentation (React SPA), Application (Django/DRF backend services), AI (AI
+Tutor + MCP Server), and Data (PostgreSQL, Redis, S3, IndexedDB).
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page2of14
+--- Page 3 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+2. Layer Architecture Overview
+2.1 Architecture Diagram
+Figure E-01 below presents the full four-layer architecture of the CBC Digital Learning Platform,
+showing each layer, its internal components, and the communication mechanisms between layers.
+FigureE-01:CBCDigitalLearningPlatform—LayeredArchitectureOverview
+2.2 Layer Descriptions
+Layer 1 — Presentation Layer
+The Presentation Layer is a React Single-Page Application (SPA) delivered to the browser. It
+comprises four functional modules: the LearnerApp (content browsing, AI tutor interface, posts and
+collaboration), the TeacherApp (material upload and management), the MoES/NCDC Admin
+Dashboard (curriculum management and analytics), and the OfflineModule (a Progressive Web
+Application service worker paired with browser-side IndexedDB for offline lesson access).
+All modules communicate with the backend over HTTPS REST (port 443) via Axios, and over
+WebSocket (Django Channels) for real-time collaboration. The SPA is built as a static production build
+and served via AWS CloudFront CDN with origin in S3, ensuring low-latency delivery across Africa.
+Layer 2 — Application Layer
+The Application Layer is the Django/DRF backend. It is organised into eight logically separated Django
+applications, each owning a distinct domain of business logic. These are: AuthService (registration,
+login, JWT issuance, RBAC), ContentService (CBC lessons and teacher materials with
+subject/level/competency tagging), PostService (learner posts, comments, reactions), CollabService
+(real-time collaborative sessions via Django Channels WebSocket), ProgressService (competency
+attainment tracking against the CBC framework), AnalyticsService (national aggregated reporting for
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page3of14
+--- Page 4 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+MoES/NCDC), OfflineSyncService (packaging and delta-syncing lesson content for offline download),
+and MediaService (file upload and AWS S3 presigned URL management).
+The backend runs on Gunicorn (HTTP) and Daphne (ASGI for WebSocket), behind an Nginx reverse
+proxy for SSL termination. Celery with Redis as broker handles asynchronous tasks such as analytics
+aggregation and notification dispatch.
+Layer 3 — AI Layer
+The AI Layer sits between the Application Layer and the external AI inference service. It consists of two
+components: the AITutorService and the MCP Server. The AITutorService receives a learner query
+from the Application Layer, retrieves relevant structured content from the NCDC knowledge base via
+the MCP Server, builds a context-enriched prompt, and dispatches it to the External AI API. The
+response is returned to the learner and logged as an AISession record in PostgreSQL.
+The MCP (Model Context Protocol) Server acts as a structured query interface over the NCDC
+curriculum content stored in PostgreSQL. It allows the AI model to access specific CBC content —
+subject material, competency definitions, and learning objectives — in a controlled, structured manner,
+ensuring responses are grounded in Ugandan domestic academic content rather than generic foreign
+knowledge bases.
+The external AI inference provider is Claude (Anthropic) or OpenAI, accessed over HTTPS with API
+key authentication. This call is outbound only and does not expose any internal platform data beyond
+the constructed prompt.
+Layer 4 — Data Layer
+The Data Layer consists of four storage components. PostgreSQL (AWS RDS, af-south-1) is the
+primary relational database storing all domain objects defined in Stage C: users, learner profiles,
+lessons, posts, AI sessions, competency progress records, and the NCDC knowledge base. Redis
+(AWS ElastiCache) handles session tokens, JWT blacklisting, Celery task brokering, and Django
+Channels pub/sub for WebSocket message routing. AWS S3 stores all binary media — uploaded
+teacher materials, images, and packaged offline content bundles. IndexedDB is the browser-side offline
+store, managed by the PWA service worker to hold pre-downloaded lesson content for connectivity-free
+access.
+Cross-Cutting Concerns
+Several concerns apply uniformly across all layers: all traffic uses HTTPS/TLS 1.2 or higher; JWT
+tokens enforce role-based access control at every API endpoint; Django Channels provides the
+WebSocket infrastructure for real-time features; Celery processes all async operations; and
+CloudWatch provides centralised logging and alerting.
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page4of14
+--- Page 5 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+3. Component Diagram
+3.1 Component Overview
+Figure E-02 presents the component diagram for the CBC Digital Learning Platform, showing all
+internal components within each layer, their responsibilities, and the interfaces through which they
+communicate.
+FigureE-02:CBCDigitalLearningPlatform—ComponentDiagram
+3.2 Component Register
+The table below formally registers each component, its layer, its primary responsibility, and its key SRS
+traceability reference.
+Component Layer Responsibility SRSRef
+LearnerApp Presentation Contentbrowsing,AItutorUI, FR-L-03toFR-
+postcreation,collaboration L-11
+TeacherApp Presentation Materialupload,CBCtagging, FR-T-01toFR-
+contentsharing T-04
+AdminApp Presentation Curriculummanagement, FR-M-01toFR-
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page5of14
+--- Page 6 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+Component Layer Responsibility SRSRef
+nationalanalyticsdashboard M-04
+OfflineModule Presentation PWAserviceworker, NFR-O-01to
+IndexedDBsync,offline NFR-O-03
+indicator
+AuthModule Presentation Loginform,JWTtokenstorage, FR-L-01,FR-L-
+sessionmanagement 02
+NotificationModule Presentation WebSocketlistener,real-time FR-L-08
+eventdisplay
+AuthService Application Userregistration,login,bcrypt NFR-SEC-02to
+hashing,JWT,RBAC NFR-SEC-04
+ContentService Application LessonandTeacherMaterial FR-L-03,FR-T-
+CRUD,CBCtagging 02,FR-T-03
+PostService Application Postcreation,comments, FR-L-06,FR-L-
+reactions,visibilitycontrols 07,FR-L-10
+CollabService Application Real-timecollaborative FR-L-08
+sessionsviaDjangoChannels
+ProgressService Application Competencyattainment FR-L-09
+trackingandlearnerprogress
+AnalyticsService Application Nationalusageaggregation, FR-M-03,FR-M-
+reportgeneration 04
+OfflineSyncService Application Lessonpackaging,deltasync, FR-L-04,NFR-
+S3bundlemanagement O-01
+MediaService Application Fileuploads,S3presignedURL FR-T-02
+generation
+AdminService Application NCDCcontentCRUD, FR-M-02
+curriculumknowledgebase
+management
+AITutorService AI Queryrouting,promptbuilding, FR-AI-01toFR-
+AIsessionlogging AI-05
+MCPServer AI StructuredNCDCcontent FR-AI-02,FR-AI-
+retrievalforpromptenrichment 03
+PostgreSQL(RDS) Data Primaryrelationalstoreforall NFR-SEC-01,
+domainentities NFR-SEC-02
+Redis(ElastiCache) Data Sessions,JWTblacklist,Celery NFR-SEC-03
+broker,WebSocketlayer
+AWSS3 Data Binarymedia,staticSPAbuild, FR-L-04
+offlinebundles
+IndexedDB Data Browser-sideofflinelesson NFR-O-01,NFR-
+storage(PWA) O-02
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page6of14
+--- Page 7 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+4. Deployment Diagram
+4.1 Deployment Environment
+The platform is deployed on Amazon Web Services in the af-south-1 region (Cape Town, South Africa).
+This region was selected as the closest AWS region to Uganda, minimising network latency for East
+African users compared to using European or US-based regions. All compute, database, and cache
+resources reside within a Virtual Private Cloud (VPC) with private subnets, ensuring no direct public
+internet access to backend infrastructure.
+4.2 Deployment Diagram
+Figure E-03 presents the full deployment view, showing all runtime nodes, the AWS services used, the
+network boundaries, and the communication paths between nodes.
+FigureE-03:CBCDigitalLearningPlatform—DeploymentDiagram(AWSaf-south-1)
+4.3 Deployment Node Register
+Node/Service AWSService Role Rationale
+CloudFrontCDN AWSCloudFront ServesReactSPA Reduceslatency;
+andstaticassetsvia Africa/globalPOP
+edge coverage
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page7of14
+--- Page 8 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+Node/Service AWSService Role Rationale
+StaticSPA+Media AWSS3 Hostsproduction Durable,cheap,scales
+Reactbuildand withoutEC2
+mediauploads
+ApplicationLoad AWSALB HTTPStermination, HAentrypoint;decouples
+Balancer routes/api/and/ws/ DNSfromEC2
+traffic
+App+AIServer EC2t3.medium RunsNginx, Singleinstancefor
+Gunicorn,Daphne, prototype;scalablelater
+Django,Celery,MCP
+PrimaryDatabase RDS Alldomaindata, Managed,encrypted,
+PostgreSQL NCDCknowledge automatedbackups
+base
+Session/Cache/ ElastiCache JWTtokens,Celery ManagedRedis;removes
+Broker Redis tasks,WebSocket single-pointoffailure
+channels
+EmailService AWSSES Transactional Deliverable,lowcost,
+notifications(future Ugandaregionroutable
+phase)
+Monitoring&Logs AWS Logaggregation, RequiredforNFR-A-01
+CloudWatch uptimealerts,error 99%uptimetarget
+tracking
+TLSCertificate AWSACM SSL/TLScertforall Auto-renewed;satisfies
+HTTPStraffic NFR-SEC-01
+IAMRoles AWSIAM Service-to-service Principleofleastprivilege
+permissions(EC2,
+S3,RDS,SES)
+ExternalAIAPI Claude/OpenAI LLMinferenceforAI Managedinference;no
+(external) tutorresponses self-hostingcost
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page8of14
+--- Page 9 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+5. API Contracts
+5.1 API Design Principles
+The platform exposes a RESTful JSON API served by Django REST Framework on all routes under
+/api/v1/. Authentication uses JWT Bearer tokens issued by the AuthService. All endpoints enforce
+RBAC: each route declares which roles (learner, teacher, moES_official) are permitted. WebSocket
+connections for real-time collaboration and notifications are served by Django Channels under the /ws/
+path prefix.
+API versioning is path-based (/api/v1/) to allow future API evolution without breaking existing clients. All
+responses follow a consistent envelope: { "status": "success"|"error", "data": {...}, "message": "..." }.
+5.2 Authentication Endpoints
+Endpoint Method Role Description SRSRef
+/api/v1/auth/register/ POST Public Registernewlearner FR-L-01,FR-T-
+orteacheraccount 01
+/api/v1/auth/login/ POST Public Authenticateuser; FR-L-02,FR-T-
+returnJWTaccess+ 01
+refreshtokens
+/api/v1/auth/logout/ POST Allroles Blacklistrefresh FR-L-02
+token;invalidate
+session
+/api/v1/auth/token/refresh/ POST Allroles Issuenewaccess FR-L-02
+tokenusingvalid
+refreshtoken
+/api/v1/auth/me/ GET Allroles Returnauthenticated FR-L-01
+userprofile
+5.3 Content Endpoints
+Endpoint Method Role Description SRSRef
+/api/v1/content/lessons/ GET Learner, Listlessons FR-L-03
+Teacher filteredby
+subject,level,
+competency
+/api/v1/content/lessons/{id}/ GET Learner, Retrievefull FR-L-03,FR-
+Teacher lessoncontentfor L-04
+displayoroffline
+cache
+/api/v1/content/lessons/ POST MoES CreatenewCBC FR-M-02
+Official lesson(NCDC-
+authored)
+/api/v1/content/materials/ GET Learner, Listteacher- FR-T-02,FR-
+Teacher uploaded T-04
+materialsby
+class/subject
+/api/v1/content/materials/ POST Teacher Uploadnew FR-T-02,FR-
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page9of14
+--- Page 10 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+Endpoint Method Role Description SRSRef
+teachingmaterial T-03
+withCBCtags
+/api/v1/content/offline-bundle/ GET Learner Fetchpackaged FR-L-04,
+lessonbundlefor NFR-O-01
+offlinedownload
+/api/v1/content/subjects/ GET Allroles ListallCBC FR-L-03
+subjects
+/api/v1/content/competencies/ GET Allroles List FR-L-09
+competenciesby
+subjectandclass
+level
+5.4 AI Tutor Endpoints
+Endpoint Method Role Description SRSRef
+/api/v1/ai/query/ POST Learner Submitacademic FR-L-05,FR-
+question;returnsAI- AI-01
+groundedresponse
+/api/v1/ai/sessions/ GET Learner Listlearner'sAIsession FR-AI-01,
+history(privateby NFR-SEC-05
+default)
+/api/v1/ai/sessions/{id}/ GET Learner RetrieveaspecificAI FR-L-10
+sessiontranscript
+5.5 Posts and Collaboration Endpoints
+Endpoint Method Role Description SRSRef
+/api/v1/posts/ GET Learner, Listpostsvisible FR-L-07
+Teacher torequestinguser
+/api/v1/posts/ POST Learner, Createanewpost FR-L-06,
+Teacher withvisibility FR-L-10
+setting
+/api/v1/posts/{id}/ GET/ Author/ Retrieve,update, FR-L-06,
+PATCH/ roles ordeleteapost FR-L-11
+DELETE
+/api/v1/posts/{id}/comments/ GET/ Learner Listoradd FR-L-07
+POST commentstoa
+post
+/api/v1/posts/{id}/react/ POST Learner AddLIKEor FR-L-07
+SHAREreaction
+toapost
+/ws/collab/{session_id}/ WebSocket Learner Real-time FR-L-08
+collaborative
+learningsession
+channel
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page10of14
+--- Page 11 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+5.6 Progress and Analytics Endpoints
+Endpoint Method Role Description SRSRef
+/api/v1/progress/me/ GET Learner Retrievelearner's FR-L-09
+owncompetency
+attainmentrecord
+/api/v1/progress/{id}/update/ POST System Update FR-L-09
+(internal) competency
+progressafter
+lessoncompletion
+/api/v1/analytics/national/ GET MoESOfficial National FR-M-03
+dashboard:usage,
+attainmentby
+region/school
+/api/v1/analytics/reports/ GET/ MoESOfficial Generateand FR-M-04
+POST exportnational
+learningreports
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page11of14
+--- Page 12 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+6. Key Architectural Decisions
+The table below records the major architectural decisions made in Stage E, the alternatives considered,
+and the rationale for each decision. This record ensures full traceability from the architecture back to
+stakeholder requirements.
+Alternative
+Decision ChoiceMade Rationale
+Considered
+Architecture Layered Microservices Appropriateforprototypescope;
+style Monolith loweroperationalcomplexity;layer
+structureenablesfutureextraction
+Backend Django+DRF Node.js/ TeamDjangoexpertise;mature
+framework FastAPI ORM;DRFprovidescleanserialiser
++authpatterns;Channelsfor
+WebSocket
+Frontend ReactSPA Next.jsSSR NoSSRneededforawebapp;SPA
+framework deliversofflinePWAcapability
+cleanly;simplerdeploymentvia
+S3+CloudFront
+AIintegration ExternalAPI+ Self-hostedLLM Prototypebudget;production-grade
+MCPServer inferencequality;MCPpattern
+groundsresponsesinNCDCcontent
+perFR-AI-03
+Deployment AWSaf-south- EUorUSregion ClosestAWSregiontoUganda;
+region 1(CapeTown) lowestlatencyforEastAfricanusers;
+datasovereigntywithinAfrica
+Offlinestrategy PWA(Service Nativemobile Web-onlyconstraintperSRS;PWA
+Worker+ app deliversofflinewithinbrowser;no
+IndexedDB) appstorerequired
+Asynctasks Celery+Redis Django Robusttaskqueue;Redisdual-use
+background (cache+broker);requiredfor
+threads analyticsaggregationatnational
+scale
+Real-time Django Polling/SSE NativeWebSocketsupport;
+Channels integrateswithDjangoauthand
+(ASGI) ORM;scaleswithRedischannel
+layer
+Database PostgreSQL MySQL/ RelationalintegrityforCBCstructure;
+(AWSRDS) MongoDB RDSmanagedservice;JSONBfor
+flexibleAIsessionlogsifneeded
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page12of14
+--- Page 13 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+7. Architecture Traceability to SRS
+This section confirms that every architectural element introduced in Stage E traces directly to a
+requirement in the SRS v1.0 and to a design decision in the stages preceding it.
+SRSRequirement AddressedBy(StageEElement)
+FR-L-01,FR-L-02—Learner AuthService(ApplicationLayer),AuthModule(Presentation
+registration/login Layer),JWT+bcrypt
+FR-L-03,FR-L-04—CBC ContentService,OfflineSyncService,OfflineModule(PWA),
+contentaccessandoffline AWSS3bundles,IndexedDB
+FR-L-05,FR-AI-01toFR-AI-05 AITutorService,MCPServer,ExternalAIAPI,/api/v1/ai/
+—AITutor endpoints
+FR-L-06,FR-L-07—Posts PostService,LearnerApp,/api/v1/posts/endpoints
+andpeersharing
+FR-L-08—Real-time CollabService,DjangoChannels,/ws/collab/WebSocket,
+collaboration Redischannellayer
+FR-L-09—Competency ProgressService,/api/v1/progress/endpoints,PostgreSQL
+progresstracking CompetencyProgressrecords
+FR-T-01toFR-T-04— ContentService,MediaService,TeacherApp,
+Teachercontentmanagement /api/v1/content/materials/endpoints
+FR-M-01toFR-M-04— AdminService,AnalyticsService,AdminApp,
+MoES/NCDCgovernance /api/v1/analytics/endpoints
+NFR-P-01,NFR-P-03—Low- CloudFrontCDN,S3compression,lazyloadinginReact,
+bandwidthperformance progressiveimagedelivery
+NFR-S-01,NFR-S-02—100k ALBhorizontalscaling,RDSMulti-AZ,ElastiCacheRedis,
+concurrentscale EC2auto-scalinggroup(future)
+NFR-A-01—99%uptime AWSALB+RDSMulti-AZHA,CloudWatchalerting,
+gracefulAIlayerdegradation
+NFR-SEC-01toNFR-SEC-06 HTTPS/TLSviaACM,bcryptauth,JWTRBAC,private
+—Securityandprivacy subnets,IAMroles,RDSencryptionatrest
+NFR-O-01toNFR-O-03— PWAServiceWorker,IndexedDB,OfflineSyncService,
+Offlinesupport offlineindicatorinOfflineModule
+NFR-AC-01toNFR-AC-05— ReactSPAresponsivedesign,CloudFrontdelivery,mobile-
+Accessibility firstCSS,languagei18narchitecture
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page13of14
+--- Page 14 ---
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|v1.0
+8. Document Sign-off
+This Software Architecture Document (SAD) represents the agreed architectural baseline for the CBC
+Digital Learning Platform following completion of Stage E of the Unified Software Architectural Process.
+All subsequent stages — Stage F (Database & Data Design), Stage G (UI/UX Design), and Stage H
+(Architecture Validation & Review) — shall be conducted in conformance with the architecture defined
+in this document.
+Modifications to this architecture after sign-off require a formal change request and must be assessed
+for impact on all dependent stages before being incorporated.
+Role Name Signature/Date
+ProjectSupervisor ___________________________ ___________________________
+SoftwareArchitect/Group ___________________________ ___________________________
+Leader
+NCDC/Stakeholder ___________________________ ___________________________
+Representative
+CBCDigitalLearningPlatform|StageE—ArchitecturalDesign|Page14of14

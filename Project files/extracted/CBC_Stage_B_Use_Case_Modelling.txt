@@ -1,0 +1,462 @@
+
+--- Page 1 ---
+CBC Digital Learning Platform
+Stage B — Use Case Modelling
+UML Use Case Diagrams & Descriptions
+Version 1.0 | April 2026
+Prepared by: Project Team — End of Year Project
+Status: Draft — Design Phase
+--- Page 2 ---
+1. Introduction
+This document presents the Stage B Use Case Modelling output for the CBC Digital Learning
+Platform. It derives from the Software Requirements Specification (SRS v1.0) and transforms all
+functional requirements (FR-L, FR-T, FR-M, FR-AI) into structured UML Use Case Diagrams and
+formal use case descriptions.
+The use cases define every meaningful interaction between the system's actors and the platform,
+establishing the behavioural baseline for subsequent design stages (Domain Modelling,
+Architecture, Database Design, and UI/UX Design).
+1.1 Actor Summary
+Five actors have been identified and modelled across four use case diagrams:
+Actor Type Description Diagram
+User(Generalised) Primary— Generalisedactorowningshared Diagram1
+Abstract authenticationbehaviourinherited
+byallhumanactors.
+Learner Primary— Secondaryschoolstudent(S1–S6). Diagram2
+Human Centraluseroftheplatform.
+Teacher Primary— Subjectteacherinaregistered Diagram3
+Human secondaryschool.
+MoES/NCDCOfficial Primary— Ministryandcurriculumauthority Diagram4
+Human staffwithgovernanceresponsibility.
+AITutor Secondary— EmbeddedAIassistantresponding Diagram4
+System tolearneracademicqueriesvia
+MCPknowledgebase.
+1.2 UML Conventions Applied
+The following standard UML conventions have been applied throughout this document:
+Convention Application
+ActorGeneralisation «User»generalisedactorownsRegister,LogIn,LogOut.Learner
+andTeacherinheritviahollow-trianglearrows.MoES/NCDCinherits
+LogInandLogOutonly(noself-registration).
+«include» Usedwhereausecaseunconditionallyrequirestheexecutionof
+another(e.g.,AccessLessonOfflinealwaysincludesDownload
+Lesson).
+«extend» Usedwhereausecaseconditionallyextendsanotheratan
+extensionpoint(e.g.,EditPostedMaterialoptionallyextendsView
+PostedMaterials).
+--- Page 3 ---
+Convention Application
+SystemBoundary Dashedrectangleenclosingallusecasesforeachsubsystem.
+Actorsareplacedoutsidetheboundary.
+SecondarySystem AITutorrenderedasalabelledrectangle(notstickfigure)onthe
+Actor rightsideofthesystemboundary,perUMLconventionfornon-
+humansystemactors.
+--- Page 4 ---
+2. Use Case Diagrams
+Diagram 1 — Authentication (Generalised User Actor)
+This diagram captures the shared authentication use cases owned by the generalised «User» actor.
+The Learner and Teacher actors inherit these behaviours via actor generalisation. MoES/NCDC
+officials are onboarded administratively and therefore do not use Register Account.
+Diagram 2 — Learner
+This diagram captures all use cases available to the Learner role, derived from FR-L-03 through
+FR-L-11. The Learner inherits authentication behaviour from the generalised «User» actor (shown
+in Diagram 1). An «include» dependency between Access Lesson Offline and Download Lesson for
+Offline Access reflects the mandatory prerequisite relationship between these two use cases.
+--- Page 6 ---
+Diagram 3 — Teacher
+This diagram captures all use cases available to the Teacher role, derived from FR-T-02 through
+FR-T-04, plus analyst additions for material management. The Teacher inherits authentication
+behaviour from «User». «include» relationships model the mandatory tagging and sharing steps
+within the posting flow. «extend» relationships model the optional edit and remove actions triggered
+from viewing posted materials.
+--- Page 7 ---
+Diagram 4 — MoES/NCDC Official & AI Tutor
+This diagram combines the MoES/NCDC Official and AI Tutor actors on a single system boundary.
+The MoES/NCDC Official manages curriculum content and national reporting. The AI Tutor is
+modelled as a secondary system actor (rectangle) on the right of the boundary, per UML
+convention. The «include» and «extend» relationships within the AI Tutor use cases reflect
+mandatory knowledge base querying and conditional out-of-scope flagging behaviour.
+--- Page 8 ---
+3. Use Case Descriptions
+The following tables provide structured descriptions for all use cases. Each description captures the
+actor, preconditions, main flow, alternate/exception flows, and postconditions — forming the
+behavioural specification for each interaction.
+3.1 Authentication Use Cases
+UC-U-01 Register Account
+Field Description
+UseCaseID UC-U-01
+UseCaseName RegisterAccount
+Actor Learner,Teacher
+Preconditions Userisnotyetregistered.Schoolhasbeenonboardedbyan
+administrator.
+MainFlow 1.Usernavigatestotheregistrationpage.2.Userentersusername
+andpassword.3.Systemvalidatesinputs(uniqueusername,password
+strength).4.Systemcreatesaccountandassignsrole.5.System
+confirmssuccessfulregistration.
+AlternateFlow A1:Usernamealreadyexists—systemdisplayserror,promptsuserto
+chooseadifferentusername.
+ExceptionFlow E1:Systemunavailable—registrationfails;userisinformedtoretry.
+Postconditions Useraccountexistsinthesystemwithassignedrole(Learneror
+Teacher).
+Priority High—Phase1
+DerivedFrom FR-L-01,FR-T-01
+UC-U-02 Log In
+Field Description
+UseCaseID UC-U-02
+UseCaseName LogIn
+Actor Learner,Teacher,MoES/NCDCOfficial
+Preconditions Userhasaregisteredaccount.ForMoES/NCDC:accountprovisioned
+administratively.
+MainFlow 1.Usernavigatestotheloginpage.2.Userentersusernameand
+password.3.Systemauthenticatescredentialsagainsthashed
+passwordstore.4.Systemstartsanauthenticatedsessionand
+redirectstorole-appropriatedashboard.
+AlternateFlow A1:Invalidcredentials—systemdisplayserror.Usermayretry.
+--- Page 9 ---
+Field Description
+ExceptionFlow E1:Systemunavailable—loginfails;userisinformed.
+Postconditions Authenticatedsessionestablished.Userisontheirrole-specific
+dashboard.
+Priority High—Phase1
+DerivedFrom FR-L-02,FR-T-01,FR-M-01
+UC-U-03 Log Out
+Field Description
+UseCaseID UC-U-03
+UseCaseName LogOut
+Actor Learner,Teacher,MoES/NCDCOfficial
+Preconditions Userhasanactiveauthenticatedsession.
+MainFlow 1.UserselectsLogOut.2.Systemterminatesthesessionandclears
+sessiontokens.3.Systemredirectsusertotheloginpage.
+AlternateFlow None.
+ExceptionFlow E1:Sessionalreadyexpired—systemredirectssilentlytologinpage.
+Postconditions Sessionisterminated.Noauthenticatedstatepersists.
+Priority High—Phase1
+DerivedFrom FR-L-02,FR-T-01(Convention—industrystandard)
+--- Page 10 ---
+3.2 Learner Use Cases
+UC-L-04 Browse CBC Content by Subject & Level
+Field Description
+UseCaseID UC-L-04
+UseCaseName BrowseCBCContentbySubject&Level
+Actor Learner
+Preconditions Learnerisloggedin.
+MainFlow 1.Learnerselectsasubjectfromthecurriculummenu.2.Learner
+selectstheirclasslevel(S1–S6).3.Systemdisplayscurriculumcontent
+organisedbycompetency.4.Learnerselectsalessontoopen.
+AlternateFlow A1:Nocontentavailableforselectedsubject/level—systemdisplaysa
+notice.
+ExceptionFlow E1:Noconnectivity—systemoffersaccesstopreviouslydownloaded
+lessonsonly(seeUC-L-06).
+Postconditions Learnerisviewingselectedlessoncontent.
+Priority High—Phase1
+DerivedFrom FR-L-03
+UC-L-05 Download Lesson for Offline Access
+Field Description
+UseCaseID UC-L-05
+UseCaseName DownloadLessonforOfflineAccess
+Actor Learner
+Preconditions Learnerisloggedin.Activeinternetconnectionisavailable.
+MainFlow 1.Learneropensalesson(viaUC-L-04).2.LearnerselectsDownload
+forOfflineAccess.3.Systemcompressesandcachesthelesson
+contenttolocalstorage.4.Systemconfirmsthelessonisavailable
+offline.
+AlternateFlow A1:Insufficientlocalstorage—systemwarnslearnerandaborts
+download.
+ExceptionFlow E1:Connectionlostmid-download—downloadfails;learnerisnotified
+toretry.
+Postconditions Lessonisstoredlocallyandmarkedasavailableoffline.
+Priority High—Phase1-2
+DerivedFrom FR-L-04
+--- Page 11 ---
+UC-L-06 Access Lesson Offline
+Field Description
+UseCaseID UC-L-06
+UseCaseName AccessLessonOffline
+Actor Learner
+Preconditions Learnerhaspreviouslydownloadedthelesson(UC-L-05).Noactive
+internetconnectionrequired.
+Includes UC-L-05(DownloadLessonforOfflineAccess)—musthaveexecuted
+priortothisusecase.
+MainFlow 1.Learneropenstheplatformwhileoffline.2.Systemdetectsoffline
+stateanddisplaysofflineindicator.3.Learnernavigatesto
+DownloadedLessons.4.Learneropensapreviouslydownloaded
+lesson.5.Systemrenderslessonfromlocalcache.
+AlternateFlow A1:Nolessonsdownloaded—systeminformslearner;onlinefeatures
+unavailable.
+ExceptionFlow Nonespecificbeyondofflineindicatordisplay.
+Postconditions Learnerisreadinglessoncontentfromlocalcachewithoutinternet
+connectivity.
+Priority High—Phase1-2
+DerivedFrom FR-L-04,NFR-O-01
+UC-L-07 Submit Question to AI Tutor
+Field Description
+UseCaseID UC-L-07
+UseCaseName SubmitQuestiontoAITutor
+Actor Learner(initiator),AITutor(respondent)
+Preconditions Learnerisloggedin.Activeinternetconnectionisavailable.
+MainFlow 1.LearnertypesanacademicquestionintheAITutorinputpanel.2.
+Learnersubmitsthequestion.3.SystemforwardsthequerytotheAI
+Tutorengine.4.AITutorqueriestheCBCKnowledgeBaseviaMCP
+(UC-AI-02).5.AITutorreturnsacontextualisedresponsewithin5
+seconds(NFR-P-02).6.Systemdisplaystheresponseinlineinthe
+learner'ssession.
+AlternateFlow A1:Questionfallsoutsidetheknowledgebase—AITutorflagsthis
+(UC-AI-05)andadvisesthelearneraccordingly.
+ExceptionFlow E1:AIlayerunavailable—systeminformslearner;corecontent
+accessremainsfunctional(NFR-A-03).
+Postconditions Learnerhasreceivedaresponse.Interactionislogged(privateby
+default,perNFR-SEC-05).
+--- Page 12 ---
+Field Description
+Priority High—Phase4
+DerivedFrom FR-L-05,FR-AI-01toFR-AI-05
+UC-L-08 Post Insight / Research Contribution
+Field Description
+UseCaseID UC-L-08
+UseCaseName PostInsight/ResearchContribution
+Actor Learner
+Preconditions Learnerisloggedin.Activeinternetconnectionisavailable.
+MainFlow 1.LearnernavigatestotheKnowledgeSharingsection.2.Learner
+composesapost(insight,idea,orresearchcontribution).3.Learner
+setsvisibility(privatebydefault—seeUC-L-13).4.Learnersubmits
+thepost.5.Systemsavesandpublishesthepostperthevisibility
+setting.
+AlternateFlow A1:Postisempty—systempromptslearnertoaddcontentbefore
+submitting.
+ExceptionFlow E1:Connectionlostbeforesubmission—draftispreservedlocally;
+learnerisnotified.
+Postconditions Postissavedandvisibleaccordingtothelearner'svisibilitysettings.
+Priority High—Phase3
+DerivedFrom FR-L-06
+UC-L-09 / UC-L-10 Share & React to Peer Post
+Field Description
+UseCaseID UC-L-09,UC-L-10
+UseCaseName SharePeerPost/ReacttoPeerPost
+Actor Learner
+Preconditions Learnerisloggedin.Peerpostisvisibletothelearnerperitsvisibility
+setting.
+MainFlow(UC-L-09) 1.Learnerviewsapeer'spostintheknowledgefeed.2.Learner
+selectsShare.3.Systemsharestheposttothelearner'sownprofileor
+toselectedpeers.4.Systemrecordstheshareaction.
+MainFlow(UC-L-10) 1.Learnerviewsapeer'spost.2.Learnerselectsareaction(e.g.,
+helpful,insightful).3.Systemrecordsthereactionandupdatesthe
+post'sengagementcount.
+ExceptionFlow E1:Connectionlost—actionisqueuedandretriedwhenconnectivity
+--- Page 13 ---
+Field Description
+isrestored.
+Postconditions Shareorreactionisrecordedandreflectedintheplatform's
+engagementdata.
+Priority High—Phase3
+DerivedFrom FR-L-07
+UC-L-11 Join Collaborative Learning Session
+Field Description
+UseCaseID UC-L-11
+UseCaseName JoinCollaborativeLearningSession
+Actor Learner
+Preconditions Learnerisloggedin.Activeinternetconnection.Asessionisavailable.
+MainFlow 1.LearnernavigatestotheCollaborationsection.2.Learnerbrowses
+orsearchesforanactivesession.3.Learnerselectsasessionand
+joins.4.Systemaddslearnertothereal-timesession.5.Learner
+participatesinsharedcontent,discussion,orpeerinteraction.
+AlternateFlow A1:Sessionisfullorrestricted—systeminformslearner.
+ExceptionFlow E1:Connectiondropsduringsession—systemattemptsreconnection
+andresumessessionstate.
+Postconditions Learnerhasparticipatedinacollaborativelearningsession.
+Priority High—Phase3
+DerivedFrom FR-L-08
+UC-L-12 View Competency Progress Dashboard
+Field Description
+UseCaseID UC-L-12
+UseCaseName ViewCompetencyProgressDashboard
+Actor Learner
+Preconditions Learnerisloggedin.Atleastsomeplatformactivityhasbeenrecorded.
+MainFlow 1.LearnernavigatestotheirProgressDashboard.2.Systemretrieves
+anddisplayscompetencyattainmentdataalignedtotheCBC
+framework.3.Learnerviewsprogresspersubject,level,and
+competency.
+AlternateFlow A1:Noactivityrecordedyet—systemdisplaysanemptystatewith
+guidance.
+--- Page 14 ---
+Field Description
+ExceptionFlow None.
+Postconditions LearnerhasviewedtheircurrentCBCcompetencyattainmentstatus.
+Priority High—Phase2
+DerivedFrom FR-L-09
+UC-L-13 Manage Post Visibility Settings
+Field Description
+UseCaseID UC-L-13
+UseCaseName ManagePostVisibilitySettings
+Actor Learner
+Preconditions Learnerisloggedin.Learnerhasatleastonepost.
+MainFlow 1.Learnernavigatestoapostorthevisibilitysettingspanel.2.Learner
+selectsthevisibilitylevel:Private(default),Peers,Teachers,orPublic.
+3.Systemsavesthevisibilitysetting.4.Systemenforcesthesettingon
+allcontentaccessattempts.
+AlternateFlow None.
+ExceptionFlow None.
+Postconditions Postvisibilityisupdatedandenforcedbytheaccesscontrollayer.
+Priority High—Phase1
+DerivedFrom FR-L-10,FR-L-11,NFR-SEC-05
+--- Page 15 ---
+3.3 Teacher Use Cases
+UC-T-04 Post Learning Material
+Field Description
+UseCaseID UC-T-04
+UseCaseName PostLearningMaterial
+Actor Teacher
+Preconditions Teacherisloggedin.
+MainFlow 1.TeachernavigatestotheContentManagementsection.2.Teacher
+createsanewmaterialpost(lesson,guide,resource).3.Teachertags
+thematerialtoCBCsubject,levelandcompetency(UC-T-05—
+included).4.Teachersharesthematerialwithregisteredlearners(UC-
+T-06—included).5.Systemsavesandpublishesthematerial.
+AlternateFlow A1:Requiredfieldsincomplete—systempromptsteachertocomplete
+taggingbeforeposting.
+ExceptionFlow E1:Uploadfails—systemretainsdraft;teacherisnotified.
+Postconditions Materialispublishedandvisibletothedesignatedlearners.
+Priority High—Phase2
+DerivedFrom FR-T-02
+UC-T-07 / UC-T-08 / UC-T-09 View, Edit & Remove Posted Material
+Field Description
+UseCaseID UC-T-07,UC-T-08,UC-T-09
+UseCaseName ViewPostedMaterials/EditPostedMaterial/RemovePostedMaterial
+Actor Teacher
+Preconditions Teacherisloggedin.Atleastonematerialhasbeenposted.
+MainFlow(UC-T-07) 1.TeachernavigatestoMyMaterials.2.Systemdisplaysallmaterials
+postedbytheteacher.3.Teacherreviewsthelist.(Optionallytriggers
+UC-T-08orUC-T-09.)
+MainFlow(UC-T-08 1.TeacherselectsEditonamaterial.2.Teachermodifiescontent,
+—extendsUC-T-07) tagging,orsharingsettings.3.Systemsavestheupdatedmaterial.
+MainFlow(UC-T-09 1.TeacherselectsRemoveonamaterial.2.Systemrequests
+—extendsUC-T-07) confirmation.3.Teacherconfirms.4.Systemremovesthematerialand
+revokeslearneraccess.
+ExceptionFlow E1:Materialhasbeenshared—systemwarnsteacherthatremovingit
+willrevokelearneraccess.
+Postconditions UC-T-07:Teacherhasviewedmaterials.UC-T-08:Materialisupdated.
+UC-T-09:Materialisremovedfromtheplatform.
+--- Page 16 ---
+Field Description
+Priority Medium—Analystaddition,Phase2
+DerivedFrom Analystaddition(industrystandardCRUDconvention)
+--- Page 17 ---
+3.4 MoES/NCDC Official Use Cases
+UC-M-03 to UC-M-05 Curriculum Content Management
+Field Description
+UseCaseID UC-M-03,UC-M-04,UC-M-05
+UseCaseName Add/Update/RetireCBCCurriculumContent
+Actor MoES/NCDCOfficial
+Preconditions OfficialisloggedinwithMoES/NCDCrole-basedaccess.
+MainFlow(UC-M-03 1.OfficialnavigatestoCurriculumManagement.2.Officialcreatesa
+Add) newcontentrecord(subject,level,competency,material).3.System
+validatesandingestscontentintotheCBCKnowledgeBase.4.
+Systemconfirmssuccessfuladdition.
+MainFlow(UC-M-04 1.Officialselectsexistingcontent.2.Officialeditscontentfields.3.
+Update) SystemsaveschangesandpropagatesupdatetotheKnowledge
+Base.
+MainFlow(UC-M-05 1.Officialselectscontenttoretire.2.Systemrequestsconfirmation.3.
+Retire) Officialconfirms.4.Systemmarkscontentasretired;itisremovedfrom
+learner-facingviewsbutretainedinauditlogs.
+ExceptionFlow E1:Contentreferencedbyactivelearnersessions—systemwarns
+officialbeforeretirement.
+Postconditions CBCKnowledgeBasereflectstheofficial'schanges.Learner-facing
+contentisupdatedaccordingly.
+Priority High—Phase1-2
+DerivedFrom FR-M-02
+UC-M-06 to UC-M-08 Analytics & Reporting
+Field Description
+UseCaseID UC-M-06,UC-M-07,UC-M-08
+UseCaseName ViewAnalyticsDashboard/Generate/ExportNationalReport
+Actor MoES/NCDCOfficial
+Preconditions OfficialisloggedinwithMoES/NCDCrole.
+MainFlow(UC-M-06) 1.OfficialnavigatestotheNationalAnalyticsDashboard.2.System
+retrievesanddisplaysplatformusage,competencyattainmenttrends,
+andengagementdatabyregionandschool.
+MainFlow(UC-M-07 1.OfficialselectsGenerateReportwithdesiredfilters(daterange,
++UC-M-08) region,subject).2.Systemcompilesreportdata.3.Systempresents
+reportpreview.4.OfficialselectsExport(UC-M-08—included).5.
+Systemgeneratesanddownloadsthereportintheselectedformat.
+AlternateFlow A1:Nodataforselectedfilters—systeminformsofficialandsuggests
+broadeningthefilterrange.
+--- Page 18 ---
+Field Description
+ExceptionFlow E1:Reportgenerationtimesoutforverylargedatasets—system
+queuesthereportandnotifiestheofficialwhenready.
+Postconditions UC-M-06:Officialhasviewednationallearninganalytics.UC-M-07/08:
+Reportisgeneratedandexportedsuccessfully.
+Priority High(UC-M-06)/Medium(UC-M-07/08)—Phase3-4
+DerivedFrom FR-M-03,FR-M-04
+--- Page 19 ---
+3.5 AI Tutor Use Cases
+UC-AI-01 to UC-AI-05 AI Tutor Behaviour
+Field Description
+UseCaseID UC-AI-01toUC-AI-05
+UseCaseName AITutor:Receive,Process,Query,Respond,Flag
+Actor AITutor(systemactor)
+Preconditions Learnerhassubmittedaquestion(UC-L-07).AIlayerisoperational.
+MCPKnowledgeBaseisaccessible.
+MainFlow 1.AITutorreceivesthelearner'squestion(UC-AI-01).2.AITutor
+queriestheCBCKnowledgeBaseviaMCPserver(UC-AI-02—
+included).3.AITutorconstructsacontextualisedresponsegroundedin
+UgandanCBCcontent(UC-AI-03—included).4.Whereappropriate,
+AITutorgeneratesconceptexplanationsandlocalexamples(UC-AI-04
+—extendsUC-AI-03).5.Responseisreturnedtotheplatformfor
+displaytothelearner.
+AlternateFlow(UC- A1:Knowledgebasequeryreturnsnovalidresult—AITutorflagsthe
+AI-05) questionasoutsidetheknowledgebase(UC-AI-05—extendsUC-AI-
+01)andreturnsatransparentnoticetothelearnerratherthan
+generatingaspeculativeresponse.
+ExceptionFlow E1:MCPserverunavailable—AITutorfallsbacktoacachedsubset
+ofknowledgeifavailable,orinformsthelearnerthatthetutoris
+temporarilyunavailable.Corecontentaccessisunaffected(NFR-A-
+03).
+Postconditions Learnerreceiveseitheragroundedcontextualisedresponseora
+transparentout-of-scopenotice.Interactionisloggedprivately.
+Priority High—Phase4
+DerivedFrom FR-AI-01toFR-AI-05
+--- Page 20 ---
+4. Requirements Traceability — Stage B
+The table below confirms that every use case in Stage B traces back to at least one functional
+requirement in the SRS, and that every functional requirement is covered by at least one use case.
+UseCaseID UseCaseName FRRequirement(s) Priority
+UC-U-01 RegisterAccount FR-L-01,FR-T-01 High
+UC-U-02 LogIn FR-L-02,FR-T-01,FR-M-01 High
+UC-U-03 LogOut FR-L-02(Convention) High
+UC-L-04 BrowseCBCContent FR-L-03 High
+UC-L-05 DownloadLessonforOffline FR-L-04 High
+Access
+UC-L-06 AccessLessonOffline FR-L-04,NFR-O-01 High
+UC-L-07 SubmitQuestiontoAITutor FR-L-05,FR-AI-01–05 High
+UC-L-08 PostInsight/Contribution FR-L-06 High
+UC-L-09 SharePeerPost FR-L-07 High
+UC-L-10 ReacttoPeerPost FR-L-07 High
+UC-L-11 JoinCollaborativeSession FR-L-08 High
+UC-L-12 ViewCompetencyProgress FR-L-09 High
+UC-L-13 ManageVisibilitySettings FR-L-10,FR-L-11,NFR- High
+SEC-05
+UC-T-04 PostLearningMaterial FR-T-02 High
+UC-T-05 TagMaterialtoCBC FR-T-03 High
+Subject/Level
+UC-T-06 ShareMaterialwithLearners FR-T-04 High
+UC-T-07 ViewPostedMaterials Analystaddition Medium
+UC-T-08 EditPostedMaterial Analystaddition Medium
+UC-T-09 RemovePostedMaterial Analystaddition Medium
+UC-M-03 AddCBCCurriculum FR-M-02 High
+Content
+UC-M-04 UpdateCBCCurriculum FR-M-02 High
+Content
+UC-M-05 RetireCBCCurriculum FR-M-02 High
+Content
+UC-M-06 ViewNationalAnalytics FR-M-03 High
+Dashboard
+--- Page 21 ---
+UseCaseID UseCaseName FRRequirement(s) Priority
+UC-M-07 GenerateNationalReport FR-M-04 Medium
+UC-M-08 ExportNationalReport FR-M-04 Medium
+UC-AI-01 Receive&ProcessQuestion FR-AI-01 High
+UC-AI-02 QueryCBCKnowledge FR-AI-03 High
+Base(MCP)
+UC-AI-03 ReturnContextualised FR-AI-02,FR-AI-04 High
+Response
+UC-AI-04 GenerateExplanation/ FR-AI-04 High
+Examples
+UC-AI-05 FlagQuestionOutofScope FR-AI-05 High
+CBCDigitalLearningPlatform | StageB—UseCaseModelling | v1.0 | April2026

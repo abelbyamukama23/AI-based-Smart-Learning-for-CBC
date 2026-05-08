@@ -1,0 +1,14 @@
+Django>=5.0,<6.0
+djangorestframework>=3.15,<4.0
+djangorestframework-simplejwt>=5.3,<6.0
+django-cors-headers>=4.3,<5.0
+django-filter>=24.0,<25.0
+python-decouple>=3.8,<4.0
+
+# AI / LLM Providers — LLM Race Pattern (Gemini | DeepSeek | Claude)
+openai>=1.0,<2.0              # DeepSeek uses OpenAI-compatible SDK
+google-generativeai>=0.8,<1.0 # Google Gemini
+anthropic>=0.30,<1.0          # Anthropic Claude
+
+# MCP — Model Context Protocol server + client SDK
+mcp>=1.0,<2.0

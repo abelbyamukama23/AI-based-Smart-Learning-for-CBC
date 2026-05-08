@@ -1,0 +1,545 @@
+
+--- Page 1 ---
+CBC Digital Learning Platform
+Stage C — Domain Modelling
+UML Class Diagram & Entity Descriptions
+Version 1.0 | April 2026
+Prepared by: Project Team — End of Year Project
+Status: Draft — Design Phase
+--- Page 2 ---
+1. Introduction
+This document presents the Stage C Domain Modelling output for the CBC Digital Learning
+Platform. It builds directly on the functional requirements in the SRS (v1.0) and the use cases
+locked in Stage B to identify and formally describe the core domain entities of the system — the
+real-world concepts the platform must represent and manage.
+Domain modelling at this stage captures what entities exist, what they know (attributes), and how
+they relate to each other (associations, compositions, and inheritance). This is distinct from
+database schema design (Stage F), which will derive from this model.
+1.1 Modelling Decisions
+Decision Ruling Rationale
+Userhierarchy Learner,Teacher, ConsistentwithStageBactor
+MoESOfficialare generalisation.Sharedidentityattributes
+subclassesofabstract (username,passwordHash,role)belong
+User toUser.Specialisedattributesarepushed
+downtosubclasses.
+Contenthierarchy Lessonand Bothsharetitle,description,timestamps,
+TeacherMaterialare andCBCtagging(Subject,ClassLevel,
+subclassesofabstract Competency).LessonaddsNCDC
+Content provenance;TeacherMaterialadds
+teacherownership.Standard
+generalisationpattern.
+Subject/ClassLevel/ Threeseparateentities Supportsindependentqueryingrequired
+Competency withassociations byFR-M-03analytics.Reflectsactual
+CBCstructurewherecompetenciesare
+definedpersubjectperlevel.
+AnalyticsDashboard Removed—modelledas Hasnopersistentstate.Aggregates
+aderivedview CompetencyProgress,AISession,and
+Postdataatquerytime.Notedinthe
+diagram.
+Reactionvs ReactionholdstypeEnum Commentcarriesitsowncontentattribute
+Comment {LIKE,SHARE};Comment andauthorship—structurallydistinctfrom
+isaseparateentity abooleanreaction.Reactionisasimple
+typedassociationbetweenLearnerand
+Post.
+1.2 Entity Summary
+# Entity Layer Superclass DerivedFrom
+1 User UserHierarchy — FR-L-01,FR-T-01,FR-M-01
+2 Learner UserHierarchy User FR-Lseries
+3 Teacher UserHierarchy User FR-Tseries
+--- Page 3 ---
+# Entity Layer Superclass DerivedFrom
+4 MoESOfficial UserHierarchy User FR-Mseries
+5 Content Content — FR-L-03,FR-T-02
+Hierarchy
+6 Lesson Content Content FR-L-03,FR-L-04
+Hierarchy
+7 TeacherMaterial Content Content FR-T-02,FR-T-03
+Hierarchy
+8 Subject CBCStructure — FR-L-03,FR-T-03
+9 ClassLevel CBCStructure — FR-L-03,FR-T-03
+10 Competency CBCStructure — FR-L-03,FR-L-09,FR-T-03
+11 OfflineCache Learner — FR-L-04,NFR-O-01
+Interactions
+12 Post Learner — FR-L-06,FR-L-07
+Interactions
+13 Comment Learner — FR-L-07(UC-L-10)
+Interactions
+14 Reaction Learner — FR-L-07(UC-L-10)
+Interactions
+15 CollaborativeSession Learner — FR-L-08
+Interactions
+16 CompetencyProgress Learner — FR-L-09
+Interactions
+17 AISession Learner — FR-L-05,FR-AI-01–05
+Interactions
+18 KnowledgeBase AI/MoES — FR-AI-03
+19 Report AI/MoES — FR-M-04
+--- Page 4 ---
+2. UML Class Diagram
+The diagram below presents the complete domain model for the CBC Digital Learning Platform.
+Entities are organised in four layers: User hierarchy (top), Content hierarchy and CBC structure
+(middle), Learner interaction entities (lower), and MoES/AI entities (bottom right).
+--- Page 5 ---
+3. Entity Descriptions
+Each entity below is described with its full attribute list, data types, and all relationships to other
+domain entities.
+3.1 User Hierarchy
+User «abstract»
+Field Detail
+EntityName User
+Stereotype abstract
+Superclass —
+DerivedFrom FR-L-01,FR-T-01,FR-M-01
+Attributes:
+Attribute Type Description
+userId UUID Uniquesystem-wideidentifierforeveryuser
+account
+username String Uniqueloginnamechosenatregistration
+passwordHash String Bcrypt-hashedpassword—plaintextnever
+stored(NFR-SEC-03)
+role Enum{LEARNER, Determinesaccesspermissionsand
+TEACHER, dashboardrouting
+ADMIN}
+createdAt DateTime Timestampofaccountcreation
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Learner Generalisation 1:0..1 UserisspecialisedasLearner
+(subclass)
+Teacher Generalisation 1:0..1 UserisspecialisedasTeacher
+(subclass)
+MoESOfficial Generalisation 1:0..1 Userisspecialisedas
+(subclass) MoESOfficial
+Learner
+--- Page 6 ---
+Field Detail
+EntityName Learner
+Stereotype —
+Superclass User
+DerivedFrom FR-Lseries
+Attributes:
+Attribute Type Description
+learnerId UUID ForeignkeyreferencetoUser.userId
+schoolId UUID Referencetothelearner'sregisteredschool
+classLevel String Currentclasslevel(S1–S6)
+enrolledAt DateTime Datethelearnerwasregisteredonthe
+platform
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+User Inheritance 1:1 InheritsallUserattributesand
+authenticationbehaviour
+OfflineCache Composition 1:0..* Learnerownstheirofflinecache
+records
+Post Association 1:0..* Learnerauthorszeroormany
+Posts
+Comment Association 1:0..* Learnerauthorszeroormany
+Comments
+Reaction Association 1:0..* Learnermakeszeroormany
+Reactions
+CollaborativeSession Association(M:M) 0..*:0..* Learnerjoinszeroormany
+Sessions
+CompetencyProgress Composition 1:0..* Learnerownstheirprogress
+records
+AISession Association 1:0..* LearnerinitiateszeroormanyAI
+Sessions
+Teacher
+--- Page 7 ---
+Field Detail
+EntityName Teacher
+Stereotype —
+Superclass User
+DerivedFrom FR-Tseries
+Attributes:
+Attribute Type Description
+teacherId UUID ForeignkeyreferencetoUser.userId
+schoolId UUID Referencetotheteacher'sregisteredschool
+subjectsTaught List<String> ListofCBCsubjectnamestheteacheris
+responsiblefor
+joinedAt DateTime Datetheteacherwasregisteredonthe
+platform
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+User Inheritance 1:1 InheritsallUserattributesand
+authenticationbehaviour
+TeacherMaterial Association 1:0..* Teacherauthorszeroormany
+TeacherMaterials
+MoESOfficial
+Field Detail
+EntityName MoESOfficial
+Stereotype —
+Superclass User
+DerivedFrom FR-Mseries
+Attributes:
+Attribute Type Description
+officialId UUID ForeignkeyreferencetoUser.userId
+department String MinistrydepartmentorNCDCdivision
+--- Page 8 ---
+Attribute Type Description
+accessLevel Enum Governancepermissiontiercontrolling
+dashboardandcontentaccess
+assignedAt DateTime Datetheofficialwasprovisionedonthe
+platform
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+User Inheritance 1:1 InheritsallUserattributesand
+authenticationbehaviour
+Report Association 1:0..* Officialgenerateszeroormany
+Reports
+--- Page 9 ---
+3.2 Content Hierarchy
+Content «abstract»
+Field Detail
+EntityName Content
+Stereotype abstract
+Superclass —
+DerivedFrom FR-L-03,FR-T-02,FR-T-03
+Attributes:
+Attribute Type Description
+contentId UUID Uniqueidentifierforallcontentitems
+title String Displaytitleofthecontent
+description String Briefsummaryofthecontent'slearning
+objective
+dateCreated DateTime Timestampofinitialcreation
+dateModified DateTime Timestampoflastmodification
+subjectId UUID ReferencetotheassociatedSubject
+classLevelId UUID ReferencetotheassociatedClassLevel
+competencyIds List<UUID> Referencestooneormoreassociated
+Competencies
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Lesson Generalisation 1:0..* ContentisspecialisedasNCDC-
+(subclass) authorisedLesson
+TeacherMaterial Generalisation 1:0..* Contentisspecialisedasteacher-
+(subclass) contributedmaterial
+Subject Association 1:1 Contentistaggedtoexactlyone
+Subject
+ClassLevel Association 1:1 Contentistaggedtoexactlyone
+ClassLevel
+Competency Association 1:1..* Contentistaggedtooneormore
+Competencies
+Lesson
+--- Page 10 ---
+Field Detail
+EntityName Lesson
+Stereotype —
+Superclass Content
+DerivedFrom FR-L-03,FR-L-04
+Attributes:
+Attribute Type Description
+source String Contentauthority—always'NCDC'for
+curriculumlessons
+isDownloadable Boolean Flagindicatingwhetherthelessoncanbe
+cachedforofflineaccess
+fileSize Integer(KB) Compressedsizeusedforstorage
+managementinOfflineCache
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Content Inheritance 1:1 InheritsallContentattributesand
+CBCtagging
+OfflineCache Association 1:0..* Lessonmayexistinzeroormany
+learnerofflinecaches
+TeacherMaterial
+Field Detail
+EntityName TeacherMaterial
+Stereotype —
+Superclass Content
+DerivedFrom FR-T-02,FR-T-03,FR-T-04
+Attributes:
+Attribute Type Description
+teacherId UUID ReferencetotheauthoringTeacher
+sharedWithLearners Boolean Flagcontrollingwhetherthematerialisvisible
+--- Page 11 ---
+Attribute Type Description
+tolearners
+resourceType String Descriptorofmaterialtype(e.g.,studyguide,
+pastpaper,notes)
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Content Inheritance 1:1 InheritsallContentattributesand
+CBCtagging
+Teacher Association 0..*:1 ManyTeacherMaterialsbelongto
+oneTeacherauthor
+--- Page 12 ---
+3.3 CBC Structure Entities
+Subject
+Field Detail
+EntityName Subject
+Stereotype —
+Superclass —
+DerivedFrom FR-L-03,FR-T-03
+Attributes:
+Attribute Type Description
+subjectId UUID Uniqueidentifierforthesubject
+subjectName String OfficialCBCsubjectname(e.g.,Mathematics,
+Biology)
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Competency Composition 1:1..* Subjectownsoneormany
+Competencies—competency
+cannotexistwithoutasubject
+Content Association 1:0..* Subjectisreferencedbyzeroor
+manycontentitems
+ClassLevel
+Field Detail
+EntityName ClassLevel
+Stereotype —
+Superclass —
+DerivedFrom FR-L-03,FR-T-03
+Attributes:
+Attribute Type Description
+levelId UUID Uniqueidentifierfortheclasslevel
+--- Page 13 ---
+Attribute Type Description
+levelName Enum{S1,S2,S3, Ugandasecondaryschoolyeargroup
+S4,S5,S6}
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Competency Association 1:0..* ClassLevelisassociatedwith
+zeroormanyCompetencies
+Content Association 1:0..* ClassLevelisreferencedbyzero
+ormanycontentitems
+Competency
+Field Detail
+EntityName Competency
+Stereotype —
+Superclass —
+DerivedFrom FR-L-03,FR-L-09,FR-T-03
+Attributes:
+Attribute Type Description
+competencyId UUID Uniqueidentifierforthecompetency
+competencyName String OfficialCBCcompetencyname
+description String Detaileddescriptionoftheexpectedlearning
+outcome
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Subject Composition(child) 0..*:1 Competencybelongstoexactly
+oneSubject
+ClassLevel Association 0..*:1 Competencyistargetedat
+exactlyoneClassLevel
+Content Association 0..*:1..* Competencyisreferencedby
+oneormanycontentitems
+CompetencyProgress Association 1:0..* Competencyistrackedbyzero
+ormanyprogressrecords
+--- Page 15 ---
+3.4 Learner Interaction Entities
+OfflineCache
+Field Detail
+EntityName OfflineCache
+Stereotype —
+Superclass —
+DerivedFrom FR-L-04,NFR-O-01
+Attributes:
+Attribute Type Description
+cacheId UUID Uniqueidentifierforthecacherecord
+learnerId UUID ReferencetotheowningLearner
+lessonId UUID ReferencetothecachedLesson
+cachedAt DateTime Timestampwhenthelessonwasdownloaded
+storageSize Integer(KB) Sizeofthecachedlessononthedevice
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Learner Composition(child) 0..*:1 Cacherecordbelongstoexactly
+oneLearner
+Lesson Association 0..*:1 Cacherecordreferencesexactly
+oneLesson
+Post
+Field Detail
+EntityName Post
+Stereotype —
+Superclass —
+DerivedFrom FR-L-06,FR-L-07,NFR-SEC-05
+Attributes:
+--- Page 16 ---
+Attribute Type Description
+postId UUID Uniqueidentifierforthepost
+authorId UUID ReferencetotheauthoringLearner
+content Text Thebodytextofthelearner'sinsightor
+researchcontribution
+visibility Enum{PRIVATE, Accesscontrollevelforthepost(privateby
+PEERS, default)
+TEACHERS,
+PUBLIC}
+datePosted DateTime Timestampofpostcreation
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Learner Association 0..*:1 Postisauthoredbyexactlyone
+Learner
+Comment Composition 1:0..* Postownszeroormany
+Comments
+Reaction Composition 1:0..* Postownszeroormany
+Reactions
+Comment
+Field Detail
+EntityName Comment
+Stereotype —
+Superclass —
+DerivedFrom FR-L-07(UC-L-10)
+Attributes:
+Attribute Type Description
+commentId UUID Uniqueidentifierforthecomment
+authorId UUID ReferencetothecommentingLearner
+text Text Thebodytextofthecomment
+datePosted DateTime Timestampofcommentcreation
+Relationships:
+--- Page 17 ---
+RelatedEntity RelationshipType Multiplicity Description
+Post Composition(child) 0..*:1 Commentbelongstoexactlyone
+Post
+Learner Association 0..*:1 Commentisauthoredbyexactly
+oneLearner
+Reaction
+Field Detail
+EntityName Reaction
+Stereotype —
+Superclass —
+DerivedFrom FR-L-07(UC-L-10)
+Attributes:
+Attribute Type Description
+reactionId UUID Uniqueidentifierforthereaction
+learnerId UUID ReferencetothereactingLearner
+postId UUID ReferencetothePostbeingreactedto
+type Enum{LIKE, Thetypeofreactionmadebythelearner
+SHARE}
+dateReacted DateTime Timestampofthereaction
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Post Composition(child) 0..*:1 Reactionbelongstoexactlyone
+Post
+Learner Association 0..*:1 Reactionismadebyexactlyone
+Learner
+CollaborativeSession
+Field Detail
+EntityName CollaborativeSession
+Stereotype —
+--- Page 18 ---
+Field Detail
+Superclass —
+DerivedFrom FR-L-08
+Attributes:
+Attribute Type Description
+sessionId UUID Uniqueidentifierforthesession
+title String Displaynameofthecollaborativesession
+startTime DateTime Scheduledoractualstarttime
+endTime DateTime Actualendtime(nullwhilesessionisactive)
+status Enum{ACTIVE, Currentstateofthesession
+CLOSED}
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Learner Association(M:M) 0..*:0..* Manylearnerscanjoinmany
+sessions
+CompetencyProgress
+Field Detail
+EntityName CompetencyProgress
+Stereotype —
+Superclass —
+DerivedFrom FR-L-09
+Attributes:
+Attribute Type Description
+progressId UUID Uniqueidentifierfortheprogressrecord
+learnerId UUID ReferencetotheowningLearner
+competencyId UUID ReferencetothetrackedCompetency
+attainmentLevel Enum Learner'scurrentattainmentstatusforthis
+{NOT_STARTED, competency
+IN_PROGRESS,
+ATTAINED}
+--- Page 19 ---
+Attribute Type Description
+lastUpdated DateTime Timestampoflastattainmentupdate
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Learner Composition(child) 0..*:1 Progressrecordbelongsto
+exactlyoneLearner
+Competency Association 0..*:1 Progressrecordtracksexactly
+oneCompetency
+AISession
+Field Detail
+EntityName AISession
+Stereotype —
+Superclass —
+DerivedFrom FR-L-05,FR-AI-01toFR-AI-05
+Attributes:
+Attribute Type Description
+sessionId UUID UniqueidentifierfortheAIinteractionrecord
+learnerId UUID ReferencetotheinitiatingLearner
+query Text Theacademicquestionsubmittedbythe
+learner
+response Text TheAITutor'scontextualisedresponse
+flaggedOutOfScope Boolean TrueifthequeryfelloutsidetheKnowledge
+Base
+timestamp DateTime Timestampoftheinteraction
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+Learner Association 0..*:1 AISessionisinitiatedbyexactly
+oneLearner
+KnowledgeBase Dependency 0..*:1 AISessionqueriesthe
+«uses» KnowledgeBaseviaMCPto
+generateresponses
+--- Page 21 ---
+3.5 MoES / AI Entities
+KnowledgeBase
+Field Detail
+EntityName KnowledgeBase
+Stereotype —
+Superclass —
+DerivedFrom FR-AI-03,FR-AI-02
+Attributes:
+Attribute Type Description
+kbId UUID Uniqueidentifierfortheknowledgebase
+instance
+version String Currentversionoftheknowledgebase
+content
+lastSyncedAt DateTime TimestampofthemostrecentMCPcontent
+sync
+mcpEndpoint String URLoftheMCPserverendpointusedbythe
+AITutor
+contentCount Integer Totalnumberofcontentrecordsindexedin
+theknowledgebase
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+AISession Dependency 1:0..* KnowledgeBaseisqueriedby
+«uses» zeroormanyAISession
+interactions
+Report
+Field Detail
+EntityName Report
+Stereotype —
+Superclass —
+DerivedFrom FR-M-04
+--- Page 22 ---
+Attributes:
+Attribute Type Description
+reportId UUID Uniqueidentifierforthegeneratedreport
+generatedBy UUID ReferencetotheMoESOfficialwhogenerated
+thereport
+dateGenerated DateTime Timestampofreportgeneration
+filters JSON Serialisedfilterparameters(daterange,
+region,subject,school)
+format Enum{PDF,CSV} Exportformatselectedatgenerationtime
+Relationships:
+RelatedEntity RelationshipType Multiplicity Description
+MoESOfficial Association 0..*:1 Reportisgeneratedbyexactly
+oneMoESOfficial
+--- Page 23 ---
+4. Requirements Traceability — Stage C
+The table below confirms that every domain entity traces back to at least one functional or non-
+functional requirement in the SRS.
+Entity SRSRequirement(s) StageBUseCase(s)
+User FR-L-01,FR-T-01,FR-M-01, UC-U-01,UC-U-02,UC-U-03
+NFR-SEC-03
+Learner FR-L-01toFR-L-11 UC-L-04toUC-L-13
+Teacher FR-T-01toFR-T-04 UC-T-04toUC-T-09
+MoESOfficial FR-M-01toFR-M-04 UC-M-03toUC-M-08
+Content FR-L-03,FR-T-02,FR-T-03 UC-L-04,UC-T-04,UC-T-05
+Lesson FR-L-03,FR-L-04 UC-L-04,UC-L-05,UC-L-06
+TeacherMaterial FR-T-02,FR-T-03,FR-T-04 UC-T-04,UC-T-05,UC-T-06
+Subject FR-L-03,FR-T-03 UC-L-04,UC-T-05
+ClassLevel FR-L-03,FR-T-03 UC-L-04,UC-T-05
+Competency FR-L-03,FR-L-09,FR-T-03 UC-L-04,UC-L-12,UC-T-05
+OfflineCache FR-L-04,NFR-O-01 UC-L-05,UC-L-06
+Post FR-L-06,FR-L-07,NFR-SEC-05 UC-L-08,UC-L-09,UC-L-10
+Comment FR-L-07 UC-L-10
+Reaction FR-L-07 UC-L-10
+CollaborativeSession FR-L-08 UC-L-11
+CompetencyProgress FR-L-09 UC-L-12
+AISession FR-L-05,FR-AI-01toFR-AI-05 UC-L-07,UC-AI-01toUC-AI-05
+KnowledgeBase FR-AI-03 UC-AI-02
+Report FR-M-04 UC-M-07,UC-M-08
+CBCDigitalLearningPlatform | StageC—DomainModelling | v1.0 | April2026

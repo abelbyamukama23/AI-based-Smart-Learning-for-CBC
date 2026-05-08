@@ -1,0 +1,474 @@
+
+--- Page 1 ---
+SOFTWARE REQUIREMENTS
+SPECIFICATION
+CBC Digital Learning Platform
+Integrating ICT and AI in Uganda's Competence-Based Curriculum
+Document Title Software Requirements Specification (SRS)
+Project Name CBC Digital Learning Platform
+Version 1.0
+Date April 2026
+Status Draft — Approved for Design Phase
+Prepared By Project Team — End of Year Project
+CBCDigitalLearningPlatform | SRSv1.0 | Page1of16
+--- Page 2 ---
+Table of Contents
+1. Introduction
+1.1 Purpose
+1.2 Scope
+1.3 Definitions and Abbreviations
+1.4 Document Overview
+2. Overall Description
+2.1 Product Perspective
+2.2 Product Context and Problem Domain
+2.3 Operating Environment
+2.4 Assumptions and Dependencies
+3. Stakeholders
+3.1 Primary Users
+3.2 Secondary Stakeholders
+4. Functional Requirements
+4.1 Learner Requirements
+4.2 Teacher Requirements
+4.3 MoES / NCDC Requirements
+4.4 AI Tutor Requirements
+5. Non-Functional Requirements
+5.1 Performance
+5.2 Scalability
+5.3 Availability
+5.4 Security and Privacy
+5.5 Offline Support
+5.6 Accessibility and Localisation
+6. Constraints
+7. Requirements Traceability Matrix
+8. Approval
+CBCDigitalLearningPlatform | SRSv1.0 | Page2of16
+--- Page 3 ---
+1. Introduction
+1.1 Purpose
+This Software Requirements Specification (SRS) defines the functional and non-
+functional requirements for the CBC Digital Learning Platform — a national
+educational technology platform designed to fully integrate ICT and Artificial
+Intelligence into Uganda's Competence-Based Curriculum (CBC). This document
+serves as the formal agreement between project stakeholders and the development
+team on what the system shall deliver.
+1.2 Scope
+The CBC Digital Learning Platform is a web-based application with a mobile-
+responsive design that enables secondary school learners (S1–S6) across Uganda
+to access curriculum-aligned content, interact with an AI-powered tutor grounded in
+domestic Ugandan knowledge, collaborate with peers nationally, and contribute to a
+shared knowledge ecosystem. The platform supports teachers as content
+contributors and provides MoES/NCDC officials with curriculum management and
+national analytics capabilities.
+The system is scoped for secondary education at launch, with architecture designed
+to scale to primary education in future phases.
+1.3 Definitions and Abbreviations
+Term/Abbreviation Definition
+CBC Competence-BasedCurriculum—Uganda'snationalcurriculumframework
+SRS SoftwareRequirementsSpecification
+MoES MinistryofEducationandSports—Uganda
+NCDC NationalCurriculumDevelopmentCentre—Uganda
+MCP ModelContextProtocol—technologyenablingAImodelstoaccess
+structuredexternalknowledgebases
+AITutor Theembeddedartificialintelligenceassistantwithintheplatformthatanswers
+academicquestions
+KnowledgeBase AstructuredstoreofUganda-specificeducationalandresearchdata
+accessedbytheAITutorviaMCPservers
+Competency AdefinedlearningoutcomewithintheCBCframeworkthatalearneris
+expectedtoattain
+OfflineMode Platformfunctionalityavailabletoalearnerwithoutanactiveinternet
+connection
+S1–S6 Secondaryschoolyeargroups(Senior1toSenior6)inUganda'seducation
+system
+CBCDigitalLearningPlatform | SRSv1.0 | Page3of16
+--- Page 4 ---
+1.4 Document Overview
+Section 2 describes the product context and operating environment. Section 3
+identifies all stakeholders. Sections 4 and 5 detail functional and non-functional
+requirements respectively. Section 6 lists known constraints. Section 7 provides a
+traceability matrix linking requirements to stakeholder needs.
+CBCDigitalLearningPlatform | SRSv1.0 | Page4of16
+--- Page 5 ---
+2. Overall Description
+2.1 Product Perspective
+The CBC Digital Learning Platform is a new, standalone national system. It does not
+replace existing school management systems but complements them by providing a
+learner-facing digital environment that extends education beyond the physical
+classroom. The platform integrates an AI layer — functioning similarly to how Grok is
+embedded in the X (Twitter) platform — making AI assistance a native part of the
+learning experience rather than an external tool.
+2.2 Product Context and Problem Domain
+Uganda's CBC was introduced to shift education from rote learning to competency
+attainment. However, several critical gaps prevent full realisation of this vision:
+• Learners have no digital platform to access CBC-aligned content outside
+school hours.
+• There is no national infrastructure connecting learners across the country for
+peer knowledge sharing.
+• Existing AI tools (such as ChatGPT or Gemini) operate on foreign knowledge
+bases with no Ugandan domestic context, making them unreliable for local
+academic content.
+• Teachers have no scalable mechanism to support every learner's questions
+individually.
+• MoES and NCDC have no real-time visibility into national learning patterns
+and curriculum effectiveness.
+This platform addresses all five gaps within a single integrated system.
+2.3 Operating Environment
+The platform must operate reliably across a mixed connectivity environment:
+EnvironmentFactor Description
+Connectivity Mixofurban(3G/4G/WiFi)andrural(2G/intermittent)connectivity
+Devices Personalsmartphones,sharedschoolcomputers/tablets,and
+personallaptops
+Screensizes 4-inchsmartphonestofulldesktopmonitors—fullyresponsive
+designrequired
+Operatingsystems Android(primarymobile),Windows(primarydesktop),iOSand
+macOS(secondary)
+Browsers Chrome,Firefox,andSafariasprimarysupportedbrowsers
+CBCDigitalLearningPlatform | SRSv1.0 | Page5of16
+--- Page 6 ---
+EnvironmentFactor Description
+Power Intermittentpowerinsomeschools—sessionsmustberesumable
+withoutdataloss
+2.4 Assumptions and Dependencies
+• NCDC will provide curriculum content in a structured digital format for
+ingestion into the knowledge base.
+• MoES will provide policy guidance on data governance and learner data
+privacy compliance.
+• Schools will register their learners and teachers through an administrative
+onboarding process.
+• The platform assumes at least 2G connectivity for online features; offline
+reading requires prior content download on a connected session.
+• AI model access (via API) is available and budgeted for operational costs.
+CBCDigitalLearningPlatform | SRSv1.0 | Page6of16
+--- Page 7 ---
+3. Stakeholders
+3.1 Primary Users
+These stakeholders actively log into and use the platform:
+Role Description PrimaryGoalonPlatform
+Learner(S1–S6) Secondaryschoolstudentsacross Accesslessons,interactwithAItutor,
+Uganda—thecentraluserofthe shareknowledge,trackprogress
+platform
+Teacher Subjectteachersinregistered Postandsharelearningmaterialsand
+secondaryschools resourceswithlearners
+MoES/NCDC Ministryandcurriculumauthoritystaff ManageCBCcontent,viewnational
+Official withgovernanceresponsibility analyticsandlearningreports
+3.2 Secondary Stakeholders
+These stakeholders are affected by the platform but do not directly use it in this
+version:
+• Parents — benefit from their child's improved access to learning resources.
+• School Administrators — responsible for registering learners and teachers;
+may receive summary reports in a future phase.
+• Research Community — benefit from the knowledge sharing and research
+contribution ecosystem generated by learners.
+• Community — broader Ugandan society benefits from improved digital literacy
+and educational outcomes.
+CBCDigitalLearningPlatform | SRSv1.0 | Page7of16
+--- Page 8 ---
+4. Functional Requirements
+Requirements are identified using the format FR-[ROLE]-[NUMBER]. Priority levels:
+High (must have for prototype), Medium (should have), Low (future phase).
+4.1 Learner Requirements
+ID Requirement Priority Source
+FR-L- Thesystemshallallowalearnertoregisteranaccountusinga High Stakeholder
+01 usernameandpassword. session
+FR-L- Thesystemshallallowalearnertologinandlogoutsecurely. High Stakeholder
+02 session
+FR-L- ThesystemshallpresentCBCcurriculumcontentorganisedby High Stakeholder
+03 subject,classlevel(S1–S6),andlearningcompetency. session
+FR-L- Thesystemshallallowalearnertoaccesspreviouslyloaded High Stakeholder
+04 lessonswhileoffline. session
+FR-L- Thesystemshallallowalearnertosubmitanacademicquestion High Stakeholder
+05 totheAItutorandreceiveacontextualisedresponse. session
+FR-L- Thesystemshallallowalearnertopostinsights,ideas,and High Stakeholder
+06 researchcontributionstotheplatform. session
+FR-L- Thesystemshallallowalearnertoshareknowledgeand High Stakeholder
+07 interactwithpostsfromotherlearnersnationally. session
+FR-L- Thesystemshallallowalearnertoparticipateinreal-time High Stakeholder
+08 collaborativelearningsessions. session
+FR-L- Thesystemshalltrackanddisplayalearner'scompetency High Stakeholder
+09 attainmentprogressalignedtotheCBCframework. session
+FR-L- Thesystemshallallowalearnertosetthevisibilityoftheirposts High Stakeholder
+10 andAIinteractions(privatebydefault). session
+FR-L- Thesystemshallallowalearnertochoosetomakespecific Medium Stakeholder
+11 postsvisibletopeers,teachers,orthepublic. session
+4.2 Teacher Requirements
+ID Requirement Priority Source
+FR-T- Thesystemshallallowateachertoregisterandloginusinga High Stakeholder
+01 usernameandpassword. session
+FR-T- Thesystemshallallowateachertopostlearningmaterials, High Stakeholder
+02 resources,andstudyguides. session
+FR-T- Thesystemshallallowateachertoassociatepostedmaterials High Stakeholder
+03 withspecificCBCsubjects,classlevels,andcompetencies. session
+FR-T- Thesystemshallallowateachertosharepostedcontentwith High Stakeholder
+04 theirregisteredlearners. session
+CBCDigitalLearningPlatform | SRSv1.0 | Page8of16
+--- Page 9 ---
+4.3 MoES / NCDC Requirements
+ID Requirement Priority Source
+FR- ThesystemshallallowanMoES/NCDCofficialtologinwithrole- High Stakeholder
+M-01 basedaccess. session
+FR- ThesystemshallallowMoES/NCDCtoadd,update,andretire High Stakeholder
+M-02 CBCcurriculumcontentintheknowledgebase. session
+FR- ThesystemshallprovideMoES/NCDCwithnationalanalytics High Stakeholder
+M-03 dashboardsshowingplatformusage,competencyattainment session
+trends,andengagementdatabyregionandschool.
+FR- ThesystemshallallowMoES/NCDCtogenerateandexport Medium Stakeholder
+M-04 nationallearningreports. session
+4.4 AI Tutor Requirements
+ID Requirement Priority Source
+FR- ThesystemshallembedanAItutoraccessibleinlinewithinthe High Stakeholder
+AI-01 learner'scontentandcollaborationexperience. session
+FR- TheAItutorshallansweracademicquestionsgroundedin High Stakeholder
+AI-02 Uganda'sCBCcurriculumcontent. session
+FR- TheAItutorshallquerydomesticUgandandatathroughMCP High Stakeholder
+AI-03 serverstocontextualiseresponseswithlocalknowledge. session
+FR- TheAItutorshallexplainconcepts,summarisetopics,and High Stakeholder
+AI-04 generaterelevantexamplesforthelearner. session
+FR- TheAItutorshallindicatewhenaquestionfallsoutsideits High Stakeholder
+AI-05 knowledgebaseratherthangeneratinginaccurateresponses. session
+FR- TheAItutorshallsupportqueriesinEnglish,witharchitecture Medium Stakeholder
+AI-06 extensibletomajorUgandanlocallanguages. session
+CBCDigitalLearningPlatform | SRSv1.0 | Page9of16
+--- Page 10 ---
+5. Non-Functional Requirements
+5.1 Performance
+ID Requirement
+NFR-P-01 Thesystemshallloadcorecurriculumcontentwithin3secondsona3Gmobile
+connection.
+NFR-P-02 TheAItutorshallreturnaresponsewithin5secondsofalearnersubmittingaquestion
+undernormalload.
+NFR-P-03 Thesystemshalloptimiseallmediaassets(images,documents)forlow-bandwidth
+deliverythroughcompressionandlazyloading.
+5.2 Scalability
+ID Requirement
+NFR-S-01 Thesystemshallsupportupto100,000concurrentlearnersnationallywithout
+performancedegradation.
+NFR-S-02 Thesystemarchitectureshallbehorizontallyscalabletoaccommodategrowthbeyond
+100,000concurrentusersinfuturephases.
+NFR-S-03 Thedatabaseshallbedesignedtohandlenational-scaledatavolumesacrossall
+secondaryschoolsinUganda.
+5.3 Availability
+ID Requirement
+NFR-A-01 Thesystemshallmaintain99%uptimeduringpeakschoolhours(7:00AMto6:00PM
+EAT,MondaytoFriday).
+NFR-A-02 Scheduledmaintenanceshallbeperformedoutsidepeakschoolhoursand
+communicatedtousersatleast24hoursinadvance.
+NFR-A-03 Thesystemshalldegradegracefully—iftheAIlayerisunavailable,corecontent
+accessshallremainfunctional.
+5.4 Security and Privacy
+ID Requirement
+NFR-SEC- AlllearnerdatashallbeencryptedintransitusingHTTPS/TLS1.2orhigher.
+01
+NFR-SEC- Alllearnerdatashallbeencryptedatrestinthedatabase.
+02
+NFR-SEC- Authenticationshallusesecurepasswordhashing(bcryptorequivalent).Plain-text
+03 passwordsshallneverbestored.
+NFR-SEC- Accesscontrolshallberole-based:learner,teacher,andMoES/NCDCrolesshallhave
+CBCDigitalLearningPlatform | SRSv1.0 | Page10of16
+--- Page 11 ---
+ID Requirement
+04 strictlyseparatedpermissions.
+NFR-SEC- Alllearneractivity,posts,andAIinteractiondatashallbeprivatebydefault.Learners
+05 controltheirownvisibilitysettings.
+NFR-SEC- ThesystemshallcomplywithapplicableUgandandataprotectionregulationsandbest
+06 practicesfortheprotectionofminors'data.
+5.5 Offline Support
+ID Requirement
+NFR-O-01 AlearnershallbeabletoreadpreviouslyloadedCBClessoncontentwithoutanactive
+internetconnection.
+NFR-O-02 Thesystemshallclearlyindicatetothelearnerwhentheyareinofflinemodeand
+whichfeaturesareunavailable.
+NFR-O-03 AItutorqueriesandposting/sharingfeaturesshallrequireanactiveinternetconnection
+andshallbeclearlymarkedasonline-only.
+5.6 Accessibility and Localisation
+ID Requirement
+NFR-AC-01 Theplatformshallbedeliveredasawebapplicationwithafullymobile-responsive
+design.
+NFR-AC-02 TheUIshallbefunctionalandusableonlow-endAndroidsmartphoneswithscreen
+sizesfrom4inchesupward.
+NFR-AC-03 Theplatformshallsupportquicksessionswitchingtoaccommodateshareddevice
+usageinschools.
+NFR-AC-04 ThesystemshallsupportEnglishastheprimarylanguageforalllearner-facingcontent
+andAItutorresponses.
+NFR-AC-05 ThelocalisationarchitectureshallbedesignedtosupportadditionofmajorUgandan
+locallanguagesinfuturephaseswithoutstructuralchanges.
+CBCDigitalLearningPlatform | SRSv1.0 | Page11of16
+--- Page 12 ---
+6. Constraints
+ConstraintType Description
+Scope Theprototypecoverssecondaryeducation(S1–S6)only.Primaryschool
+expansionisafuturephase.
+Authentication Learnerauthenticationislimitedtousernameandpassword.NophoneOTPor
+nationalIDintegrationinthisversion.
+Offlinecapability Offlineaccessislimitedtoreadingpreviouslyloadedlessons.AIqueriesand
+collaborationrequireconnectivity.
+Language Englishistheonlyfullysupportedlanguageintheprototype.Locallanguage
+supportisanarchitecturalprovisionforfutureimplementation.
+Platformdelivery Thesystemisdeliveredasawebapplicationonly.Nativemobileapplications
+(iOS/Android)areafuturephase.
+AIknowledge AItutorresponsesaregroundedincontentprovidedbyNCDC.Theaccuracyof
+base AIresponsesisdependentonthequalityandcompletenessoftheknowledge
+basecontentloadedintotheMCPserver.
+Regulatory TheplatformmustcomplywithapplicableUgandandataprotectionlaw.Learner
+data(particularlyforminors)mustbehandledwithstrictprivacycontrols.
+CBCDigitalLearningPlatform | SRSv1.0 | Page12of16
+--- Page 13 ---
+7. Requirements Traceability Matrix
+This matrix confirms that every stakeholder need identified in Stage A maps to at
+least one documented requirement, and that every requirement traces back to a
+validated stakeholder need.
+Stakeholder RequirementIDs Priority Phase
+Need
+Learnersaccess FR-L-03,FR-L-04,NFR-P-01,NFR-O-01 High Phase1–2
+CBCcontent
+anywhere
+Learnersinteract FR-L-05,FR-AI-01toFR-AI-06,NFR-P- High Phase4
+withAItutor 02
+Learners FR-L-06,FR-L-07,FR-L-08 High Phase3
+collaborateand
+sharenationally
+Learnerstrack FR-L-09 High Phase2
+competency
+progress
+Learnerdata FR-L-10,FR-L-11,NFR-SEC-05,NFR- High Phase1
+privacyandcontrol SEC-06
+Securelearner FR-L-01,FR-L-02,NFR-SEC-02,NFR- High Phase1
+authentication SEC-03
+Teachers FR-T-01toFR-T-04 High Phase2
+contributecontent
+MoES/NCDC FR-M-01,FR-M-02 High Phase1–2
+managecurriculum
+MoES/NCDCview FR-M-03,FR-M-04 High Phase3–4
+nationalanalytics
+Platformworkson NFR-P-01,NFR-P-03,NFR-O-01to High Phase1
+ruralconnectivity NFR-O-03
+Platformworkson NFR-AC-01toNFR-AC-03 High Phase1
+shared/low-end
+devices
+Platformscalesto NFR-S-01toNFR-S-03 High Phase1
+nationallevel
+AIusesdomestic FR-AI-02,FR-AI-03 High Phase4
+Ugandan
+knowledge
+Language FR-AI-06,NFR-AC-04,NFR-AC-05 Medium Phase4–5
+accessibility
+CBCDigitalLearningPlatform | SRSv1.0 | Page13of16
+--- Page 14 ---
+Abbreviations & Key Terms
+ThispageprovidesdefinitionsforallabbreviationsandkeytermsusedthroughouttheSRS
+document.Termsaregroupedbycategoryforquickreference.
+Abbreviation Full Form Definition / Context in this Document
+Document&Standards
+SRS SoftwareRequirements Thisdocument.Theformalrecordofallsystem
+Specification requirementsagreedbetweenstakeholders
+andthedevelopmentteam.
+SAD SoftwareArchitecture Thedesign-phasedocumentproducedin
+Document StageEdescribingthesystem'sstructuraland
+technicalarchitecture.
+TOC TableofContents ThenavigationalindexatthestartoftheSRS
+listingallsectionsandtheirpagelocations.
+v1.0 Version1.0 Thefirstapprovedbaselineversionofthis
+document.Changesafterapprovalrequirea
+formalchangerequest.
+FR FunctionalRequirement Arequirementdescribingwhatthesystem
+mustDO.Format:FR-[ROLE]-[NUMBER]e.g.
+FR-L-01.
+NFR Non-Functional Arequirementdescribinghowwellthesystem
+Requirement mustperform.Format:NFR-[CATEGORY]-
+[NUMBER]e.g.NFR-P-01.
+RTM RequirementsTraceability Section7ofthisdocument.Mapsevery
+Matrix stakeholderneedtoitscorresponding
+requirementIDsanddevelopmentphase.
+Institutions&Roles
+MoES MinistryofEducationand Uganda'sgovernmentministryresponsiblefor
+Sports educationpolicy.Aprimarystakeholderand
+activeplatformuserinthissystem.
+NCDC NationalCurriculum Thebodyresponsiblefordevelopingand
+DevelopmentCentre maintainingUganda'snationalcurriculum.
+Contentauthorityfortheknowledgebase.
+CBC Competence-Based Uganda'snationalcurriculumframework
+Curriculum introducedtoshifteducationfromrotelearning
+tomeasurablecompetencyattainment.
+S1–S6 Senior1toSenior6 Uganda'ssecondaryschoolyeargroups.The
+CBCDigitalLearningPlatformtargetsthis
+rangeatlaunch.
+P1–P7 Primary1toPrimary7 Uganda'sprimaryschoolyeargroups.
+Expansiontothislevelisafuturephaseofthe
+platform.
+EAT EastAfricaTime Thetimezone(UTC+3)usedfordefiningpeak
+schoolhoursinavailabilityrequirements(NFR-
+A-01).
+CBCDigitalLearningPlatform | SRSv1.0 | Page14of16
+--- Page 15 ---
+Abbreviation Full Form Definition / Context in this Document
+Technology&Architecture
+AI ArtificialIntelligence ThetechnologypoweringtheembeddedAI
+Tutor.TheAImodelanswerslearner
+questions,explainscontent,andgenerates
+examples.
+MCP ModelContextProtocol ThetechnologystandardenablingtheAI
+modeltoconnecttoandquerystructured
+externalknowledgebases(theNCDCcontent
+store).
+API ApplicationProgramming Thecontractdefininghowsoftware
+Interface componentscommunicate.Usedbetweenthe
+platformfrontend,backend,andAIlayer.
+UI UserInterface Thescreens,pages,andcomponentsthat
+usersinteractwithdirectly.Designedtobe
+mobile-responsive.
+UX UserExperience Theoverallexperienceofusingtheplatform—
+easeofuse,accessibility,andlearnerjourney
+design.
+DB Database Thestructureddatastoreholdinglearner
+profiles,curriculumcontent,posts,AIsession
+logs,andanalytics.
+HTTPS HypertextTransfer Theencryptedwebcommunicationprotocol
+ProtocolSecure requiredbyNFR-SEC-01foralldataintransit.
+TLS TransportLayerSecurity TheencryptionstandardusedbyHTTPS.
+Version1.2orhigherisrequiredperNFR-
+SEC-01.
+OTP One-TimePassword Aphone-basedauthenticationmethod
+consideredbutnotadopted.Authentication
+usesusernameandpasswordonly(FR-L-01).
+RequirementIDPrefixes
+FR-L- FunctionalReq.— RequirementsgoverningwhattheLearnerrole
+Learner candoontheplatform.e.g.FR-L-03=learner
+accessesCBCcontent.
+FR-T- FunctionalReq.— RequirementsgoverningwhattheTeacherrole
+Teacher cando.e.g.FR-T-02=teacherpostslearning
+materials.
+FR-M- FunctionalReq.— RequirementsgoverningwhatMoES/NCDC
+MoES/NCDC officialscando.e.g.FR-M-03=viewnational
+analytics.
+FR-AI- FunctionalReq.—AI Requirementsgoverningthebehaviourofthe
+Tutor AITutorsystem.e.g.FR-AI-03=queryMCP
+knowledgebase.
+NFR-P- Non-FunctionalReq.— Performancebenchmarks.e.g.NFR-P-01=
+CBCDigitalLearningPlatform | SRSv1.0 | Page15of16
+--- Page 16 ---
+Abbreviation Full Form Definition / Context in this Document
+Performance loadcontentinunder3secondson3G.
+NFR-S- Non-FunctionalReq.— Scalabilitytargets.e.g.NFR-S-01=support
+Scalability 100,000concurrentlearners.
+NFR-A- Non-FunctionalReq.— Uptimeandavailabilityrequirements.e.g.
+Availability NFR-A-01=99%uptimeduringschoolhours.
+NFR-SEC- Non-FunctionalReq.— Securityanddataprivacyrequirements.e.g.
+Security NFR-SEC-05=learnerdataprivatebydefault.
+NFR-O- Non-FunctionalReq.— Offlinemoderequirements.e.g.NFR-O-01=
+Offline readpreviouslyloadedlessonswithout
+internet.
+NFR-AC- Non-FunctionalReq.— Accessibilityandlocalisationrequirements.
+Accessibility e.g.NFR-AC-02=functionalon4-inch
+smartphones.
+8. Approval
+This Software Requirements Specification has been compiled from a structured
+requirements elicitation session conducted by us to assess the and validate the user
+requirements(FR) and NFR. It represents the agreed baseline for all subsequent
+design and development activities.
+Changes to requirements after approval must follow a formal change request
+process and must be reviewed for impact on the system architecture before
+implementation.
+Role Name Signature/Date
+Project Supervisor ___________________ ___________________
+Software Architect/Group ___________________ ___________________
+leader
+EndofDocument
+CBCDigitalLearningPlatform | SRSv1.0 | Page16of16
