@@ -30,6 +30,7 @@ from asgiref.sync import sync_to_async
 from apps.curriculum.models import Lesson, Competency, Subject, Level
 from apps.accounts.models import User, Learner
 from apps.ai_tutor.models import AISession
+from duckduckgo_search import DDGS
 
 # ── MCP Server Instance ───────────────────────────────────────────────────────
 mcp = FastMCP(
@@ -247,6 +248,29 @@ async def get_available_subjects() -> str:
         JSON list of subjects (id, name).
     """
     return await sync_to_async(_db_get_available_subjects)()
+
+
+@mcp.tool()
+async def search_uganda_curriculum_web(query: str) -> str:
+    """
+    Search the web for Uganda Competence Based Curriculum (CBC) topics.
+    Use this tool when the local database does not have enough information.
+    
+    Args:
+        query: The topic to search for (e.g. 'Photosynthesis', 'World War 2').
+        
+    Returns:
+        JSON string containing the top web search results.
+    """
+    def _do_search():
+        try:
+            full_query = f"Uganda Competence Based Curriculum CBC {query}"
+            results = DDGS().text(full_query, max_results=3)
+            return json.dumps(list(results), indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+            
+    return await sync_to_async(_do_search)()
 
 
 # ════════════════════════════════════════════════════════════════════════════════

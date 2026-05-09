@@ -9,9 +9,11 @@ from rest_framework import viewsets, mixins, status
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+import json
+from django.http import StreamingHttpResponse
 from .models import AISession
 from .serializers import AISessionSerializer, AskSerializer
-from .agent import run_tutor_agent
+from .agent import run_tutor_agent_stream
 
 logger = logging.getLogger(__name__)
 
@@ -62,35 +64,55 @@ class AISessionViewSet(
         query_text = serializer.validated_data["query"]
         context_lesson_id = serializer.validated_data.get("context_lesson_id")
 
-        # ── Run the AI Agent ──────────────────────────────────────────────────
+        # ── Setup Streaming Response ──────────────────────────────────────────
         user_id = str(request.user.id)
         logger.info(
             f"TutorAgent invoked for user={user_id}, "
             f"lesson_ctx={context_lesson_id}, query='{query_text[:80]}...'"
         )
 
-        response_text, is_out_of_scope, provider_used, tool_calls_log = run_tutor_agent(
-            user_id=user_id,
-            query=query_text,
-            context_lesson_id=str(context_lesson_id) if context_lesson_id else None,
-        )
+        def stream_generator():
+            # 1. Fetch History
+            history = AISession.objects.filter(learner=request.user).order_by("-timestamp")[:5]
+            history_list = []
+            for h in reversed(history):
+                history_list.append({"role": "user", "content": h.query})
+                if h.response:
+                    history_list.append({"role": "assistant", "content": h.response})
 
-        # ── Persist Session ───────────────────────────────────────────────────
-        session = AISession.objects.create(
-            learner=request.user,
-            query=query_text,
-            response=response_text,
-            flagged_out_of_scope=is_out_of_scope,
-            context_lesson_id=context_lesson_id,
-            tool_calls_log=tool_calls_log,
-            llm_provider_used=provider_used,
-        )
+            # 2. Consume Stream
+            final_data = {}
+            for chunk in run_tutor_agent_stream(
+                user_id=user_id,
+                query=query_text,
+                context_lesson_id=str(context_lesson_id) if context_lesson_id else None,
+                history=history_list,
+            ):
+                try:
+                    data = json.loads(chunk)
+                    if data.get("type") == "final":
+                        final_data = data
+                except Exception:
+                    pass
+                yield f"data: {chunk}\n\n"
 
-        logger.info(
-            f"AISession {session.id} created | provider={provider_used} | "
-            f"out_of_scope={is_out_of_scope} | tools_called={len(tool_calls_log)}"
-        )
+            # 3. Persist final answer
+            if final_data:
+                session = AISession.objects.create(
+                    learner=request.user,
+                    query=query_text,
+                    response=final_data.get("content", ""),
+                    flagged_out_of_scope=final_data.get("is_out_of_scope", False),
+                    context_lesson_id=context_lesson_id,
+                    tool_calls_log=final_data.get("tool_calls_log", []),
+                    llm_provider_used=final_data.get("provider", ""),
+                )
+                logger.info(
+                    f"AISession {session.id} created | provider={session.llm_provider_used} | "
+                    f"out_of_scope={session.flagged_out_of_scope}"
+                )
 
-        # ── Return Response ───────────────────────────────────────────────────
-        response_serializer = AISessionSerializer(session)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        response = StreamingHttpResponse(stream_generator(), content_type="text/event-stream")
+        response["Cache-Control"] = "no-cache"
+        response["X-Accel-Buffering"] = "no"
+        return response

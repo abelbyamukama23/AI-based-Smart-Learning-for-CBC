@@ -85,6 +85,7 @@ export default function TutorPage() {
   const [history, setHistory]     = useState([]);
   const [histLoading, setHistLoading] = useState(true);
   const [showHistory, setShowHistory] = useState(false);
+  const [streamingStatus, setStreamingStatus] = useState("");
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
@@ -121,7 +122,15 @@ export default function TutorPage() {
     setSending(true);
 
     try {
-      const session = await askTutor(text);
+      setStreamingStatus("Thinking...");
+      const session = await askTutor(text, null, (data) => {
+        if (data.type === "status") {
+          setStreamingStatus(data.message);
+        } else if (data.type === "tool_call") {
+          setStreamingStatus(`Using tool: ${data.name}...`);
+        }
+      });
+      
       setMessages(prev => [
         ...prev,
         {
@@ -139,6 +148,7 @@ export default function TutorPage() {
       // Remove the user message if AI failed completely
     } finally {
       setSending(false);
+      setStreamingStatus("");
       inputRef.current?.focus();
     }
   };
@@ -214,6 +224,11 @@ export default function TutorPage() {
                 <div className="chat-bubble__avatar" aria-hidden>🤖</div>
                 <div className="chat-bubble__body">
                   <div className="typing-indicator" aria-label="AI is thinking">
+                    {streamingStatus && (
+                      <span className="streaming-status-text" style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginRight: "8px", fontStyle: "italic" }}>
+                        {streamingStatus}
+                      </span>
+                    )}
                     <span /><span /><span />
                   </div>
                 </div>

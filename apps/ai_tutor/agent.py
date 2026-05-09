@@ -434,31 +434,31 @@ class TutorAgent:
     def __init__(self):
         self.system_prompt = (
             "You are Mwalimu, an expert AI Tutor for the Uganda "
-            "Competence-Based Curriculum (CBC). Your role is to help learners "
-            "understand curriculum content, answer subject questions, and guide "
-            "them through competency-based learning.\n\n"
-            "Rules:\n"
-            "1. Only answer questions related to CBC curriculum subjects "
-            "(Mathematics, Science, English, SST, ICT, etc.).\n"
-            "2. If a question is out of scope (politics, violence, adult content), "
+            "Competence-Based Curriculum (CBC). You are not just an answering machine; "
+            "you are a highly intelligent and engaging teacher. Treat every question from a learner as a mini-lesson.\n\n"
+            "Pedagogical Rules & Approach:\n"
+            "1. Curriculum Focus: Only answer questions related to CBC curriculum subjects "
+            "(Mathematics, Science, English, SST, ICT, etc.). If a question is out of scope (politics, violence, adult content), "
             "politely decline and redirect to curriculum topics.\n"
-            "3. Use the available tools to search curriculum content and provide "
-            "accurate, grounded answers.\n"
-            "4. Tailor your explanation to the learner's class level when known.\n"
-            "5. Be encouraging, patient, and pedagogically sound."
+            "2. Contextual Learning: Teach using analogies, scenarios, and local Ugandan examples. Draw information from "
+            "the learner's natural environment and surroundings so they can easily relate to the concept and see how it is applied in daily life.\n"
+            "3. Natural Thinking & Problem Solving: Guide the learner to think critically. Instead of just delivering raw facts, "
+            "force the learner into natural thinking by relating the problem to real-world situations they can solve.\n"
+            "4. Invisible Tool Usage: Use available tools to search curriculum content for accurate, grounded answers. "
+            "IMPORTANT: Never mention the names of the tools you used, your execution flow, or say 'Based on the search results...'. "
+            "Just speak naturally as a human teacher would.\n"
+            "5. Tone: Be encouraging, patient, tailored to the learner's class level, and pedagogically sound."
         )
 
-    async def run(
+    async def run_stream(
         self,
         user_id: str,
         query: str,
         context_lesson_id: Optional[str] = None,
-    ) -> tuple[str, bool, str, list]:
+        history: list = None,
+    ):
         """
-        Run the full agent loop.
-
-        Returns:
-            (response_text, is_out_of_scope, provider_used, tool_calls_log)
+        Run the full agent loop yielding JSON strings for each step.
         """
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
@@ -475,6 +475,8 @@ class TutorAgent:
             async with ClientSession(read, write) as session:
                 await session.initialize()
 
+                yield json.dumps({"type": "status", "message": "Initializing AI Tutor session..."})
+                
                 # ── 1. List available tools from MCP server ───────────────────
                 tools_list = await session.list_tools()
                 tools_schema = [
@@ -486,6 +488,7 @@ class TutorAgent:
                     for t in tools_list.tools
                 ]
 
+                yield json.dumps({"type": "status", "message": "Fetching learner context..."})
                 # ── 2. Build initial context ──────────────────────────────────
                 learner_ctx = await _fetch_learner_context(session, user_id)
                 learner_data = {}
@@ -521,9 +524,11 @@ class TutorAgent:
                         pass
 
                 # ── 4. Agentic tool-calling loop ──────────────────────────────
-                messages = [{"role": "user", "content": query}]
+                messages = history or []
+                messages.append({"role": "user", "content": query})
 
                 for round_num in range(self.MAX_TOOL_ROUNDS):
+                    yield json.dumps({"type": "status", "message": "Analyzing query and formulating response..."})
                     text, tool_calls, provider = await _race_llms(
                         messages, tools_schema, system_prompt
                     )
@@ -531,7 +536,14 @@ class TutorAgent:
                     # No tool calls → we have a final answer
                     if not tool_calls:
                         is_out_of_scope = "out of scope" in text.lower()
-                        return text, is_out_of_scope, provider, tool_calls_log
+                        yield json.dumps({
+                            "type": "final",
+                            "content": text,
+                            "is_out_of_scope": is_out_of_scope,
+                            "provider": provider,
+                            "tool_calls_log": tool_calls_log
+                        })
+                        return
 
                     # Execute each tool call via MCP
                     tool_results = []
@@ -539,6 +551,11 @@ class TutorAgent:
                         tool_name = tc["name"]
                         tool_args = tc.get("args", {})
                         logger.info(f"Agent calling MCP tool: {tool_name}({tool_args})")
+                        yield json.dumps({
+                            "type": "tool_call",
+                            "name": tool_name,
+                            "args": tool_args
+                        })
 
                         try:
                             result_text = await _call_mcp_tool(session, tool_name, tool_args)
@@ -569,6 +586,7 @@ class TutorAgent:
                         })
 
                 # Safety fallback after MAX_TOOL_ROUNDS
+                yield json.dumps({"type": "status", "message": "Finalizing answer..."})
                 final_text, _, provider = await _race_llms(
                     messages + [
                         {"role": "user", "content": "Please provide your final answer now."}
@@ -577,28 +595,57 @@ class TutorAgent:
                     system_prompt,
                 )
                 is_out_of_scope = "out of scope" in final_text.lower()
-                return final_text, is_out_of_scope, provider, tool_calls_log
+                yield json.dumps({
+                    "type": "final",
+                    "content": final_text,
+                    "is_out_of_scope": is_out_of_scope,
+                    "provider": provider,
+                    "tool_calls_log": tool_calls_log
+                })
+                return
 
 
 # ── Convenience sync wrapper for Django views ─────────────────────────────────
-def run_tutor_agent(
+# ── Convenience sync wrapper for Django views ─────────────────────────────────
+def run_tutor_agent_stream(
     user_id: str,
     query: str,
     context_lesson_id: Optional[str] = None,
-) -> tuple[str, bool, str, list]:
+    history: list = None,
+):
     """
-    Synchronous wrapper around TutorAgent.run() for use in Django views.
-    Handles event loop creation/reuse.
+    Synchronous generator wrapper around TutorAgent.run_stream() for use in Django views.
+    Runs the event loop in a background thread and yields items from a thread-safe queue.
     """
-    agent = TutorAgent()
-    try:
-        from asgiref.sync import async_to_sync
-        return async_to_sync(agent.run)(user_id, query, context_lesson_id)
-    except Exception as e:
-        logger.exception(f"TutorAgent failed: {e}")
-        return (
-            "I encountered an error while processing your request. Please try again.",
-            False,
-            "error",
-            [],
-        )
+    import queue
+    import threading
+
+    q = queue.Queue()
+
+    def run_in_thread():
+        async def do_run():
+            agent = TutorAgent()
+            try:
+                async for chunk in agent.run_stream(user_id, query, context_lesson_id, history):
+                    q.put(chunk)
+            except Exception as e:
+                logger.exception(f"TutorAgent stream failed: {e}")
+                q.put(json.dumps({
+                    "type": "error",
+                    "message": "I encountered an error while processing your request."
+                }))
+            finally:
+                q.put(None)  # EOF marker
+        try:
+            asyncio.run(do_run())
+        except Exception as e:
+            q.put(json.dumps({"type": "error", "message": str(e)}))
+            q.put(None)
+
+    threading.Thread(target=run_in_thread, daemon=True).start()
+
+    while True:
+        chunk = q.get()
+        if chunk is None:
+            break
+        yield chunk
