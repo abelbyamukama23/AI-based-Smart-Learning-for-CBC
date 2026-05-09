@@ -30,6 +30,7 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
+    "storages",
 ]
 
 LOCAL_APPS = [
@@ -155,3 +156,34 @@ CORS_ALLOW_CREDENTIALS = True
 
 # ─── OpenAI (AI Tutor — FR-AI-01 to FR-AI-05) ────────────────────────────────
 OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
+
+# ─── Cloudflare R2 File Storage (Library Agent) ───────────────────────────────
+CLOUDFLARE_R2_ACCOUNT_ID      = config("CLOUDFLARE_R2_ACCOUNT_ID", default="")
+CLOUDFLARE_R2_ACCESS_KEY_ID   = config("CLOUDFLARE_R2_ACCESS_KEY_ID", default="")
+CLOUDFLARE_R2_SECRET_ACCESS_KEY = config("CLOUDFLARE_R2_SECRET_ACCESS_KEY", default="")
+CLOUDFLARE_R2_BUCKET_NAME     = config("CLOUDFLARE_R2_BUCKET_NAME", default="")
+CLOUDFLARE_R2_ENDPOINT_URL    = config("CLOUDFLARE_R2_ENDPOINT_URL", default="")
+CLOUDFLARE_R2_PUBLIC_URL      = config("CLOUDFLARE_R2_PUBLIC_URL", default="")
+
+# Use R2 for media files when credentials are configured, else fall back to local
+if CLOUDFLARE_R2_ACCESS_KEY_ID and CLOUDFLARE_R2_BUCKET_NAME:
+    STORAGES = {
+        "default": {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+    AWS_ACCESS_KEY_ID        = CLOUDFLARE_R2_ACCESS_KEY_ID
+    AWS_SECRET_ACCESS_KEY    = CLOUDFLARE_R2_SECRET_ACCESS_KEY
+    AWS_STORAGE_BUCKET_NAME  = CLOUDFLARE_R2_BUCKET_NAME
+    AWS_S3_ENDPOINT_URL      = CLOUDFLARE_R2_ENDPOINT_URL
+    AWS_S3_REGION_NAME       = "auto"
+    AWS_S3_SIGNATURE_VERSION = "s3v4"
+    AWS_DEFAULT_ACL          = None        # R2 does not use ACLs
+    AWS_S3_FILE_OVERWRITE    = False       # Preserve original filenames
+    AWS_QUERYSTRING_AUTH     = False       # Clean public-style URLs
+    MEDIA_URL = (CLOUDFLARE_R2_PUBLIC_URL.rstrip("/") + "/") if CLOUDFLARE_R2_PUBLIC_URL else "/media/"
+else:
+    MEDIA_ROOT = BASE_DIR / "media"
+    MEDIA_URL  = "/media/"
+
+# ─── ChromaDB Vector Store path (RAG / Library Agent) ────────────────────────
+CHROMADB_PATH = str(BASE_DIR / ".chromadb")

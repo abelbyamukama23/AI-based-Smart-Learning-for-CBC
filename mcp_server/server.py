@@ -274,6 +274,183 @@ async def search_uganda_curriculum_web(query: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
+# Library Agent Tools — RAG-powered curriculum knowledge base
+# ════════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def search_library_rag(
+    query: str,
+    subject: str = "",
+    class_level: str = "",
+) -> str:
+    """
+    PRIMARY SEARCH TOOL — Search the curriculum library using semantic similarity (RAG).
+    Always try this tool FIRST before searching the web.
+    Returns textbook excerpts, lesson summaries, maps, and teaching materials
+    that are directly sourced from the Uganda CBC curriculum database.
+
+    Args:
+        query: The learning topic or question (e.g. 'How does photosynthesis work?').
+        subject: Optional subject filter (e.g. 'Biology', 'Mathematics').
+        class_level: Optional class level filter (e.g. 'S1', 'S2', 'P6').
+
+    Returns:
+        JSON string with ranked library materials most relevant to the query.
+    """
+    def _do_rag_search():
+        try:
+            from apps.curriculum.rag_service import search_library
+            results = search_library(query, subject=subject, class_level=class_level, n_results=5)
+
+            if results:
+                return json.dumps({
+                    "source": "curriculum_library",
+                    "count": len(results),
+                    "results": results,
+                }, indent=2)
+
+            # Fallback: keyword search in the DB if vector store is empty
+            from apps.curriculum.models import Lesson
+            lessons = Lesson.objects.filter(
+                title__icontains=query
+            ).select_related("subject", "class_level")[:3]
+
+            if lessons:
+                db_results = [
+                    {
+                        "title": l.title,
+                        "subject": l.subject.subject_name if l.subject else "",
+                        "class_level": l.class_level.level_name if l.class_level else "",
+                        "excerpt": (l.description or l.body_html)[:400],
+                        "type": "lesson",
+                        "relevance": 0.6,
+                    }
+                    for l in lessons
+                ]
+                return json.dumps({
+                    "source": "curriculum_db_keyword",
+                    "count": len(db_results),
+                    "results": db_results,
+                }, indent=2)
+
+            return json.dumps({"source": "curriculum_library", "count": 0, "results": []})
+
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    return await sync_to_async(_do_rag_search)()
+
+
+@mcp.tool()
+async def compile_lesson_from_material(
+    material_title: str,
+    topic: str,
+) -> str:
+    """
+    Library Agent: compile a structured lesson from a specific curriculum material.
+    Searches the library for the material and returns a structured compilation with:
+    key lessons, real-world application (Uganda context), main message, and challenge questions.
+
+    Args:
+        material_title: Title or keyword of the book/file to read from.
+        topic: The specific topic within the material to focus on.
+
+    Returns:
+        JSON string with structured lesson components ready to teach to the learner.
+    """
+    def _do_compile():
+        try:
+            from apps.curriculum.rag_service import search_library, compile_lesson
+
+            # Search for the specific material
+            results = search_library(f"{material_title} {topic}", n_results=3)
+            if not results:
+                return json.dumps({
+                    "error": f"No material found for '{material_title}' on topic '{topic}'. "
+                             "The library may need more content — try search_library_rag or web_search_curriculum."
+                })
+
+            excerpts = [r["excerpt"] for r in results]
+            source   = results[0]["title"]
+            lesson   = compile_lesson(source, topic, excerpts)
+
+            return json.dumps({
+                "source_material": lesson["source_material"],
+                "topic":           lesson["topic"],
+                "context":         lesson["context"],
+                "compile_prompt":  lesson["instruction"],
+            }, indent=2)
+
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    return await sync_to_async(_do_compile)()
+
+
+@mcp.tool()
+async def research_and_save_curriculum(
+    topic: str,
+    subject: str = "",
+    class_level: str = "",
+) -> str:
+    """
+    Research Agent: Automatically discover, score, and save relevant curriculum
+    content from the web when the library has no results for a topic.
+
+    Use this tool ONLY when search_library_rag returns 0 results.
+    The agent will:
+      1. Search the web for Uganda CBC resources on this topic
+      2. Score each source for curriculum relevance (0.0-1.0)
+      3. Auto-save high-confidence content (>0.80) directly to the library
+      4. Queue borderline content (0.50-0.80) for admin review at /admin/
+
+    Args:
+        topic: The curriculum topic to research (e.g. 'Photosynthesis', 'Fractions').
+        subject: Subject name to filter results (e.g. 'Biology', 'Mathematics').
+        class_level: Target class level (e.g. 'S1', 'P6').
+
+    Returns:
+        JSON summary of discovered and saved content.
+    """
+    def _do_research():
+        try:
+            from apps.curriculum.research_agent import research_and_save
+            result = research_and_save(
+                topic=topic,
+                subject=subject,
+                class_level=class_level,
+                max_sources=3,
+            )
+            summary = {
+                "sources_checked":  result["sources_checked"],
+                "auto_approved":    len(result["auto_approved"]),
+                "pending_review":   len(result["pending_review"]),
+                "discarded":        result["discarded"],
+                "new_library_items": [
+                    {"title": i["title"], "score": i["score"]}
+                    for i in result["auto_approved"]
+                ],
+            }
+            if result["auto_approved"]:
+                summary["message"] = (
+                    f"Added {len(result['auto_approved'])} new resource(s) to the library. "
+                    f"Now retry search_library_rag to get the content."
+                )
+            elif result["pending_review"]:
+                summary["message"] = (
+                    f"Found {len(result['pending_review'])} resource(s) that need admin review "
+                    f"at /admin/ before they appear in the library."
+                )
+            else:
+                summary["message"] = "No sufficiently relevant resources found online for this topic."
+            return json.dumps(summary, indent=2)
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    return await sync_to_async(_do_research)()
+
+
+# ════════════════════════════════════════════════════════════════════════════════
 # Entry point — stdio transport
 # ════════════════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":

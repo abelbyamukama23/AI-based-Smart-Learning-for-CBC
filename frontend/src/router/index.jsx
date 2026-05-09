@@ -14,15 +14,16 @@ import { AuthLayout } from "../layouts/AuthLayout";
 import { AppLayout } from "../layouts/AppLayout";
 import { ProtectedRoute, GuestRoute } from "../components/routing/ProtectedRoute";
 
-import LoginPage from "../pages/auth/LoginPage";
-import RegisterPage from "../pages/auth/RegisterPage";
-import LearnerDashboard from "../pages/dashboard/LearnerDashboard";
-import TeacherDashboard from "../pages/dashboard/TeacherDashboard";
-import LessonsPage from "../pages/lessons/LessonsPage";
-import LessonDetailPage from "../pages/lessons/LessonDetailPage";
-import TutorPage from "../pages/tutor/TutorPage";
-import FeedPage from "../pages/feed/FeedPage";
+import LoginPage          from "../pages/auth/LoginPage";
+import RegisterPage       from "../pages/auth/RegisterPage";
+import LearnerDashboard   from "../pages/dashboard/LearnerDashboard";
+import TeacherDashboard   from "../pages/dashboard/TeacherDashboard";
+import LessonsPage        from "../pages/lessons/LessonsPage";
+import LessonDetailPage   from "../pages/lessons/LessonDetailPage";
+import TutorPage          from "../pages/tutor/TutorPage";
+import FeedPage           from "../pages/feed/FeedPage";
 import FeedPostDetailPage from "../pages/feed/FeedPostDetailPage";
+import LibraryPage        from "../pages/library/LibraryPage";
 
 const router = createBrowserRouter([
   // ── Root redirect ──────────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ const router = createBrowserRouter([
       {
         element: <AuthLayout />,
         children: [
-          { path: "/login", element: <LoginPage /> },
+          { path: "/login",    element: <LoginPage /> },
           { path: "/register", element: <RegisterPage /> },
         ],
       },
@@ -53,12 +54,13 @@ const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: "/learner/dashboard", element: <LearnerDashboard /> },
-          { path: "/learner/lessons", element: <LessonsPage /> },
-          { path: "/learner/lessons/:id", element: <LessonDetailPage /> },
-          { path: "/learner/tutor", element: <TutorPage /> },
-          { path: "/learner/feed", element: <FeedPage /> },
-          { path: "/learner/feed/:id", element: <FeedPostDetailPage /> },
+          { path: "/learner/dashboard",  element: <LearnerDashboard /> },
+          { path: "/learner/lessons",    element: <LessonsPage /> },
+          { path: "/learner/lessons/:id",element: <LessonDetailPage /> },
+          { path: "/learner/tutor",      element: <TutorPage /> },
+          { path: "/learner/feed",       element: <FeedPage /> },
+          { path: "/learner/feed/:id",   element: <FeedPostDetailPage /> },
+          { path: "/learner/library",    element: <LibraryPage /> },
         ],
       },
     ],
@@ -71,11 +73,12 @@ const router = createBrowserRouter([
       {
         element: <AppLayout />,
         children: [
-          { path: "/teacher/dashboard", element: <TeacherDashboard /> },
-          { path: "/teacher/lessons", element: <LessonsPage /> },
-          { path: "/teacher/lessons/:id", element: <LessonDetailPage /> },
-          { path: "/teacher/feed", element: <FeedPage /> },
-          { path: "/teacher/feed/:id", element: <FeedPostDetailPage /> },
+          { path: "/teacher/dashboard",  element: <TeacherDashboard /> },
+          { path: "/teacher/lessons",    element: <LessonsPage /> },
+          { path: "/teacher/lessons/:id",element: <LessonDetailPage /> },
+          { path: "/teacher/feed",       element: <FeedPage /> },
+          { path: "/teacher/feed/:id",   element: <FeedPostDetailPage /> },
+          { path: "/teacher/library",    element: <LibraryPage /> },
         ],
       },
     ],

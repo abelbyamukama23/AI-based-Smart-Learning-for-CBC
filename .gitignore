@@ -63,3 +63,7 @@ final_test.json
 mcp_server/__pycache__/
 *.chroma/
 chroma_db/
+.chromadb/
+
+# ── HuggingFace model cache (large, no need to commit) ───────────────────────
+.cache/huggingface/

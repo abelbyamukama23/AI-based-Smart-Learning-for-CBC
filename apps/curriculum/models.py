@@ -71,3 +71,88 @@ class Lesson(Content):
 
     def __str__(self):
         return f"Lesson: {self.title} ({self.subject} - {self.class_level})"
+
+
+# ── Library Agent Models ──────────────────────────────────────────────────────
+
+class FileType(models.TextChoices):
+    PDF       = "PDF",   "PDF / Textbook"
+    IMAGE     = "IMAGE", "Image / Illustration"
+    AUDIO     = "AUDIO", "Audio Recording"
+    MAP       = "MAP",   "Map / Geography"
+    VIDEO     = "VIDEO", "Video"
+    OTHER     = "OTHER", "Other"
+
+
+class CurriculumFile(models.Model):
+    """
+    A library asset stored in Cloudflare R2.
+    Represents textbooks, maps, audio, images, and other teaching materials.
+    The Library Agent searches and compiles lessons from these.
+    """
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title       = models.CharField(max_length=255, db_index=True)
+    description = models.TextField(blank=True)
+    file_type   = models.CharField(max_length=10, choices=FileType.choices, db_index=True)
+    file        = models.FileField(upload_to="library/", help_text="Uploaded to Cloudflare R2")
+    subject     = models.ForeignKey(Subject, on_delete=models.SET_NULL, null=True, blank=True, related_name="library_files")
+    class_level = models.ForeignKey(Level, on_delete=models.SET_NULL, null=True, blank=True, related_name="library_files")
+    tags        = models.CharField(max_length=500, blank=True, help_text="Comma-separated topic tags")
+    # RAG indexing status
+    is_indexed  = models.BooleanField(default=False, help_text="True after ChromaDB embedding is built")
+    indexed_at  = models.DateTimeField(null=True, blank=True)
+    # Metadata
+    source      = models.CharField(max_length=200, blank=True, help_text="Publisher, NCDC, etc.")
+    uploaded_by = models.ForeignKey(
+        "accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="uploaded_files"
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+    modified_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Library File"
+        verbose_name_plural = "Library Files"
+
+    def __str__(self):
+        return f"[{self.file_type}] {self.title}"
+
+    @property
+    def tag_list(self):
+        return [t.strip() for t in self.tags.split(",") if t.strip()]
+
+
+class ResearchEntry(models.Model):
+    """
+    Content discovered by the Research Agent from external web sources.
+    Goes through an approval workflow before entering the main library.
+    """
+    class Status(models.TextChoices):
+        PENDING  = "PENDING",  "Pending Review"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    id               = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    topic            = models.CharField(max_length=255)
+    source_url       = models.URLField(max_length=500)
+    title            = models.CharField(max_length=255, blank=True)
+    content          = models.TextField(help_text="Scraped/summarised content from the web")
+    subject          = models.ForeignKey(Subject, on_delete=models.SET_NULL, null=True, blank=True)
+    class_level      = models.ForeignKey(Level, on_delete=models.SET_NULL, null=True, blank=True)
+    relevance_score  = models.FloatField(default=0.0, help_text="0.0–1.0 CBC relevance score from LLM")
+    status           = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
+    auto_approved    = models.BooleanField(default=False, help_text="True if auto-approved by relevance threshold")
+    # Link to the library file created when approved
+    library_file     = models.OneToOneField(
+        CurriculumFile, on_delete=models.SET_NULL, null=True, blank=True, related_name="research_source"
+    )
+    created_at       = models.DateTimeField(auto_now_add=True)
+    reviewed_at      = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-relevance_score", "-created_at"]
+        verbose_name = "Research Entry"
+        verbose_name_plural = "Research Entries"
+
+    def __str__(self):
+        return f"[{self.status}] {self.topic} ({self.relevance_score:.2f})"
