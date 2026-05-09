@@ -14,7 +14,7 @@ import { Link } from "react-router-dom";
 import useAuthStore from "../../store/authStore";
 import { getLessons, getSubjects } from "../../services/curriculum.service";
 import { getFeedPosts } from "../../services/feed.service";
-import { getTutorHistory } from "../../services/tutor.service";
+import { getChatThreads } from "../../services/tutor.service";
 import { getProfile } from "../../services/auth.service";
 
 // ── Skeleton loader ───────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ export default function LearnerDashboard() {
             getSubjects(),
             getLessons({ page_size: 6 }),
             getFeedPosts({ page: 1 }),
-            getTutorHistory(),
+            getChatThreads(),
           ]);
 
         if (profileData.status === "fulfilled") setProfile(profileData.value);

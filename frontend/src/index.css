@@ -1710,3 +1710,249 @@ a:hover { color: var(--color-primary-700); }
 .feed-preview-card__time { font-size: 0.7rem; color: var(--color-grey-500); }
 .feed-preview-card__content { font-size: var(--font-size-sm); color: var(--color-grey-700); margin-bottom: var(--space-2); }
 .feed-preview-card__stats { font-size: 0.75rem; color: var(--color-grey-500); display: flex; gap: var(--space-3); }
+
+/* ─── Tutor Page (Threaded) ─────────────────────────────────────────────────── */
+.tutor-page {
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--color-grey-50);
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────────── */
+.tutor-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-white);
+  border-right: 1px solid var(--color-grey-200);
+  transition: width var(--transition-normal);
+  overflow: hidden;
+  flex-shrink: 0;
+  z-index: 10;
+}
+.tutor-sidebar--open   { width: 280px; }
+.tutor-sidebar--closed { width: 52px; }
+
+.tutor-sidebar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-3);
+  border-bottom: 1px solid var(--color-grey-100);
+  gap: var(--space-2);
+}
+
+.tutor-sidebar__new-btn {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+}
+
+.tutor-sidebar--closed .tutor-sidebar__new-btn {
+  display: none;
+}
+
+.btn-icon {
+  padding: var(--space-2);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.tutor-sidebar__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tutor-sidebar__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-grey-400);
+  padding: var(--space-4) var(--space-2);
+  text-align: center;
+}
+
+.tutor-thread-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+.tutor-thread-item:hover { background: var(--color-grey-50); }
+.tutor-thread-item--active { background: var(--color-primary-50) !important; }
+
+.tutor-thread-item__title {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-grey-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+  display: block;
+}
+
+.tutor-thread-item--active .tutor-thread-item__title {
+  color: var(--color-primary-700);
+  font-weight: 600;
+}
+
+.tutor-thread-item__meta {
+  font-size: 0.7rem;
+  color: var(--color-grey-400);
+}
+
+/* ── Chat Area ───────────────────────────────────────────────────────────────── */
+.tutor-chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.tutor-chat__header {
+  padding: var(--space-4) var(--space-6);
+  background: var(--color-white);
+  border-bottom: 1px solid var(--color-grey-100);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.tutor-chat__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.tutor-chat__avatar {
+  font-size: 1.5rem;
+  background: linear-gradient(135deg, var(--color-primary-600), #7c3aed);
+  border-radius: var(--radius-lg);
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tutor-chat__name {
+  font-size: var(--font-size-lg);
+  font-weight: 700;
+  color: var(--color-grey-900);
+  line-height: 1.2;
+}
+
+.tutor-chat__subtitle {
+  font-size: var(--font-size-xs);
+  color: var(--color-grey-500);
+}
+
+/* ── Messages ────────────────────────────────────────────────────────────────── */
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── Streaming status ────────────────────────────────────────────────────────── */
+.streaming-status-text {
+  font-size: var(--font-size-xs);
+  color: var(--color-primary-600);
+  font-style: italic;
+  margin-right: var(--space-2);
+  animation: fadeIn 0.3s ease;
+}
+
+/* ── Input bar icon buttons (mic / camera) ───────────────────────────────────── */
+.chat-input-bar__icon-btn {
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+  border: 1.5px solid var(--color-grey-200);
+  background: var(--color-white);
+  font-size: 1.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  color: var(--color-grey-600);
+}
+.chat-input-bar__icon-btn:hover:not(:disabled) {
+  background: var(--color-grey-100);
+  border-color: var(--color-grey-300);
+  transform: scale(1.05);
+}
+.chat-input-bar__icon-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Active state — camera button when image is attached */
+.chat-input-bar__icon-btn--active {
+  border-color: var(--color-accent-500);
+  background: var(--color-success-50);
+}
+
+/* Listening state — mic button pulsing while recording */
+.chat-input-bar__icon-btn--listening {
+  border-color: var(--color-error-500);
+  background: var(--color-error-50);
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.35); }
+  50%       { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+/* ── Image preview strip ─────────────────────────────────────────────────────── */
+.chat-image-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-grey-50);
+  border-top: 1px solid var(--color-grey-100);
+  animation: slideUp var(--transition-fast);
+}
+
+.chat-image-preview__img {
+  height: 52px;
+  width: 52px;
+  object-fit: cover;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-grey-200);
+}
+
+.chat-image-preview__remove {
+  background: var(--color-error-50);
+  border: 1px solid var(--color-error-200);
+  color: var(--color-error-700);
+  border-radius: var(--radius-full);
+  width: 22px;
+  height: 22px;
+  font-size: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.chat-image-preview__remove:hover { background: var(--color-error-200); }
+

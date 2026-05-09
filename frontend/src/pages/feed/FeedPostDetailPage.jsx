@@ -26,8 +26,13 @@ export default function FeedPostDetailPage() {
     setAskingMwalimu(true);
     setMwalimuResponse(null);
     try {
-      const session = await askTutor(`Can you explain or provide more context on this post: "${post.content}"`);
-      setMwalimuResponse(session.response);
+      const result = await askTutor(
+        `Can you explain or provide more context on this post: "${post.content}"`,
+        null,   // threadId — creates a new thread
+        null,   // contextLessonId
+        () => {} // onMessage — discard stream steps, only care about result
+      );
+      setMwalimuResponse(result.response || "Sorry, I could not generate an insight right now.");
     } catch {
       setMwalimuResponse("Sorry, I could not generate an insight right now.");
     } finally {

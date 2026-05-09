@@ -132,6 +132,31 @@ async def _fetch_lesson_context(session, lesson_id: str) -> str:
 
 
 # ════════════════════════════════════════════════════════════════════════════════
+# Schema Sanitizer — strips fields all LLM APIs reject from JSON-Schema dicts
+# ════════════════════════════════════════════════════════════════════════════════
+
+_SCHEMA_BLOCKED_FIELDS = {"default", "title", "$schema", "examples", "$defs"}
+
+
+def _sanitize_schema(schema) -> dict:
+    """
+    Recursively strip JSON-Schema fields that OpenAI-compatible APIs (DeepSeek,
+    Groq, Ollama) and Anthropic reject: 'default', 'title', '$schema', etc.
+    Safe to call with non-dict values (returns them unchanged).
+    """
+    if not isinstance(schema, dict):
+        return schema
+    cleaned = {k: v for k, v in schema.items() if k not in _SCHEMA_BLOCKED_FIELDS}
+    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+        cleaned["properties"] = {
+            k: _sanitize_schema(v) for k, v in cleaned["properties"].items()
+        }
+    if "items" in cleaned:
+        cleaned["items"] = _sanitize_schema(cleaned["items"])
+    return cleaned
+
+
+# ════════════════════════════════════════════════════════════════════════════════
 # LLM Wrappers — Each returns (text_response, tool_calls_list, provider_name)
 # ════════════════════════════════════════════════════════════════════════════════
 
@@ -193,11 +218,11 @@ async def _call_gemini(messages: list, tools_schema: list, system_prompt: str):
     return text, tool_calls, "gemini-1.5-flash"
 
 
-async def _call_deepseek(messages: list, tools_schema: list, system_prompt: str):
-    """Call DeepSeek (OpenAI-compatible) with tool support."""
+async def _call_deepseek(messages: list, tools_schema: list, system_prompt: str,
+                         image_b64: str = None, image_mime: str = None):
+    """Call DeepSeek (OpenAI-compatible) with tool and vision support."""
     client = _get_deepseek_client()
 
-    # Build OpenAI-style tool schema
     openai_tools = [
         {
             "type": "function",
@@ -212,7 +237,24 @@ async def _call_deepseek(messages: list, tools_schema: list, system_prompt: str)
 
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
-    kwargs = {"model": "deepseek-chat", "messages": full_messages, "max_tokens": 1024}
+    # If an image is provided, attach it to the last user message as vision content
+    if image_b64 and image_mime:
+        for i in range(len(full_messages) - 1, -1, -1):
+            if full_messages[i]["role"] == "user" and isinstance(full_messages[i]["content"], str):
+                original_text = full_messages[i]["content"]
+                full_messages[i] = {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
+                        },
+                        {"type": "text", "text": original_text},
+                    ],
+                }
+                break
+
+    kwargs = {"model": "deepseek-chat", "messages": full_messages, "max_tokens": 2048}
     if openai_tools:
         kwargs["tools"] = openai_tools
         kwargs["tool_choice"] = "auto"
@@ -364,21 +406,19 @@ async def _call_claude(messages: list, tools_schema: list, system_prompt: str):
 # Race Runner
 # ════════════════════════════════════════════════════════════════════════════════
 
-async def _race_llms(messages: list, tools_schema: list, system_prompt: str):
+async def _race_llms(messages: list, tools_schema: list, system_prompt: str,
+                     image_b64: str = None, image_mime: str = None):
     """
-    Try DeepSeek first. If it fails, fire remaining LLMs simultaneously and 
-    return the result of whichever responds first.
-
+    Try DeepSeek first (with optional vision). If it fails, race remaining LLMs.
     Returns: (text, tool_calls, provider_name)
     """
-    # 1. Try DeepSeek first as the primary LLM if configured
     if config("DEEPSEEK_API_KEY", default=""):
         try:
-            return await _call_deepseek(messages, tools_schema, system_prompt)
+            return await _call_deepseek(messages, tools_schema, system_prompt, image_b64, image_mime)
         except Exception as e:
             logger.warning(f"DeepSeek failed, falling back to race: {e}")
 
-    # 2. Race the remaining fallback LLMs
+    # Race the remaining fallback LLMs (text-only fallbacks)
     providers = {}
     if config("GEMINI_API_KEY", default=""):
         providers["gemini"] = _call_gemini(messages, tools_schema, system_prompt)
@@ -390,7 +430,6 @@ async def _race_llms(messages: list, tools_schema: list, system_prompt: str):
         providers["ollama"] = _call_ollama(messages, tools_schema, system_prompt)
 
     if not providers:
-        # Fallback: no API keys configured → mock response
         logger.warning("No LLM API keys configured. Returning mock response.")
         return (
             "[Mock] No LLM API keys are set. Please configure GROQ_API_KEY, "
@@ -400,12 +439,10 @@ async def _race_llms(messages: list, tools_schema: list, system_prompt: str):
         )
 
     tasks = [asyncio.create_task(coro, name=name) for name, coro in providers.items()]
-    
     errors = []
     for coro in asyncio.as_completed(tasks):
         try:
             result = await coro
-            # We got a successful response! Cancel all remaining tasks.
             for t in tasks:
                 if not t.done():
                     t.cancel()
@@ -415,7 +452,6 @@ async def _race_llms(messages: list, tools_schema: list, system_prompt: str):
             logger.error(f"LLM task failed: {e}")
             errors.append(str(e))
 
-    # If we get here, ALL providers failed
     return (f"All LLM providers failed: { ' | '.join(errors) }", [], "error")
 
 
@@ -431,23 +467,92 @@ class TutorAgent:
 
     MAX_TOOL_ROUNDS = 5  # Safety limit on agentic loop iterations
 
+    # Phrases that indicate the model is narrating its internal process — strip these lines
+    _INTERNAL_PREFIXES = (
+        "let me ", "let me also", "let me now", "alright!", "alright,",
+        "based on my search", "based on the search", "based on the results",
+        "according to the system", "the platform shows", "the system shows",
+        "i found that", "i found that", "i'll now", "i will now",
+        "now let me", "let me look", "let me check", "let me find",
+        "let me search", "let me retrieve", "let me fetch",
+    )
+
+    @staticmethod
+    def _clean_response(text: str) -> str:
+        """
+        Strip lines where Mwalimu narrates its internal tool-calling process.
+        These lines should only appear as SSE status events, never in the final answer.
+        """
+        if not text:
+            return text
+        lines = text.splitlines()
+        kept = []
+        for line in lines:
+            low = line.strip().lower()
+            # Drop blank lines that were separating stripped content
+            if any(low.startswith(p) for p in TutorAgent._INTERNAL_PREFIXES):
+                continue
+            kept.append(line)
+        # Collapse more than 2 consecutive blank lines into 1
+        result = []
+        blanks = 0
+        for line in kept:
+            if line.strip() == "":
+                blanks += 1
+                if blanks <= 1:
+                    result.append(line)
+            else:
+                blanks = 0
+                result.append(line)
+        return "\n".join(result).strip()
+
+
     def __init__(self):
         self.system_prompt = (
             "You are Mwalimu, an expert AI Tutor for the Uganda "
             "Competence-Based Curriculum (CBC). You are not just an answering machine; "
             "you are a highly intelligent and engaging teacher. Treat every question from a learner as a mini-lesson.\n\n"
+
             "Pedagogical Rules & Approach:\n"
             "1. Curriculum Focus: Only answer questions related to CBC curriculum subjects "
             "(Mathematics, Science, English, SST, ICT, etc.). If a question is out of scope (politics, violence, adult content), "
             "politely decline and redirect to curriculum topics.\n"
+
             "2. Contextual Learning: Teach using analogies, scenarios, and local Ugandan examples. Draw information from "
             "the learner's natural environment and surroundings so they can easily relate to the concept and see how it is applied in daily life.\n"
+
             "3. Natural Thinking & Problem Solving: Guide the learner to think critically. Instead of just delivering raw facts, "
             "force the learner into natural thinking by relating the problem to real-world situations they can solve.\n"
-            "4. Invisible Tool Usage: Use available tools to search curriculum content for accurate, grounded answers. "
-            "IMPORTANT: Never mention the names of the tools you used, your execution flow, or say 'Based on the search results...'. "
-            "Just speak naturally as a human teacher would.\n"
-            "5. Tone: Be encouraging, patient, tailored to the learner's class level, and pedagogically sound."
+
+            "4. ASSIGNMENT ETHICS — This is critical:\n"
+            "   a) If a learner asks you to SOLVE, DO, or COMPLETE a specific exercise, exam question, or homework "
+            "      assignment WITHOUT showing any attempt of their own, DO NOT give the answer. "
+            "      Instead, encourage them warmly: say you are happy to guide them, "
+            "      ask them to try first and share their attempt (as text or a photo of their work), "
+            "      and explain that you will review it together.\n"
+            "   b) If a learner shares their attempt — either as text in the chat OR as a photo/image of their handwritten work — "
+            "      analyze it carefully. Praise what is correct. Gently identify errors. "
+            "      Guide them step-by-step towards the correct answer WITHOUT just giving them the final answer outright. "
+            "      The goal is to BUILD understanding, not to replace it.\n"
+            "   c) If a learner asks a CONCEPTUAL question (e.g. 'What is photosynthesis?' or 'How does division work?'), "
+            "      answer it fully with local examples — this is not an assignment, it is learning.\n"
+
+            "5. Image Analysis: When a learner shares an image of their handwritten work, "
+            "carefully read and analyse what is written. Treat it the same as if they typed their attempt.\n"
+
+            "6. INVISIBLE EXECUTION — THIS IS THE MOST CRITICAL RULE:\n"
+            "   Your final written response is what a learner READS. It must sound like a human teacher speaking directly to them.\n"
+            "   You have tools and can search for information — but you must do this SILENTLY. \n"
+            "   Your final answer must NEVER contain ANY of the following:\n"
+            "   - Statements about what you are doing or searching: 'Let me search...', 'Let me check...', 'Let me look up...', 'Let me find...'\n"
+            "   - References to tools or searches: 'Based on my search', 'According to the system', 'The platform shows', 'I found that...'\n"
+            "   - Transitional thinking phrases: 'Alright!', 'Now let me...', 'Let me also...', 'Let me now...'\n"
+            "   - Any mention that you searched, retrieved data, or used any tool whatsoever.\n"
+            "   Think of it this way: a teacher walks into class already prepared. They do not say 'Let me now open my book to check...'\n"
+            "   They simply TEACH. That is exactly how your final response must read.\n"
+            "   STATUS MESSAGES (shown while the learner waits) may communicate your progress — but NEVER the final written answer.\n"
+
+            "7. Tone: Be encouraging, warm, and patient. Tailor explanations to the learner's class level when known."
         )
 
     async def run_stream(
@@ -456,10 +561,10 @@ class TutorAgent:
         query: str,
         context_lesson_id: Optional[str] = None,
         history: list = None,
+        image_b64: str = None,
+        image_mime: str = None,
     ):
-        """
-        Run the full agent loop yielding JSON strings for each step.
-        """
+        """Run the full agent loop yielding JSON strings for each step."""
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
 
@@ -483,7 +588,10 @@ class TutorAgent:
                     {
                         "name": t.name,
                         "description": t.description or "",
-                        "inputSchema": t.inputSchema if hasattr(t, "inputSchema") else {},
+                        # Sanitize once here — all LLM providers get clean schemas
+                        "inputSchema": _sanitize_schema(
+                            t.inputSchema if hasattr(t, "inputSchema") else {}
+                        ),
                     }
                     for t in tools_list.tools
                 ]
@@ -529,16 +637,21 @@ class TutorAgent:
 
                 for round_num in range(self.MAX_TOOL_ROUNDS):
                     yield json.dumps({"type": "status", "message": "Analyzing query and formulating response..."})
+                    # Only send image on the first round; subsequent rounds are tool-result text-only
+                    round_image_b64   = image_b64   if round_num == 0 else None
+                    round_image_mime  = image_mime  if round_num == 0 else None
                     text, tool_calls, provider = await _race_llms(
-                        messages, tools_schema, system_prompt
+                        messages, tools_schema, system_prompt,
+                        round_image_b64, round_image_mime
                     )
 
                     # No tool calls → we have a final answer
                     if not tool_calls:
-                        is_out_of_scope = "out of scope" in text.lower()
+                        clean = TutorAgent._clean_response(text)
+                        is_out_of_scope = "out of scope" in clean.lower()
                         yield json.dumps({
                             "type": "final",
-                            "content": text,
+                            "content": clean,
                             "is_out_of_scope": is_out_of_scope,
                             "provider": provider,
                             "tool_calls_log": tool_calls_log
@@ -589,15 +702,16 @@ class TutorAgent:
                 yield json.dumps({"type": "status", "message": "Finalizing answer..."})
                 final_text, _, provider = await _race_llms(
                     messages + [
-                        {"role": "user", "content": "Please provide your final answer now."}
+                        {"role": "user", "content": "Please provide your final answer now. Do NOT narrate your process — speak directly to the learner as their teacher."}
                     ],
-                    [],  # No tools in final round
+                    [],
                     system_prompt,
                 )
-                is_out_of_scope = "out of scope" in final_text.lower()
+                clean_final = TutorAgent._clean_response(final_text)
+                is_out_of_scope = "out of scope" in clean_final.lower()
                 yield json.dumps({
                     "type": "final",
-                    "content": final_text,
+                    "content": clean_final,
                     "is_out_of_scope": is_out_of_scope,
                     "provider": provider,
                     "tool_calls_log": tool_calls_log
@@ -605,13 +719,15 @@ class TutorAgent:
                 return
 
 
-# ── Convenience sync wrapper for Django views ─────────────────────────────────
+
 # ── Convenience sync wrapper for Django views ─────────────────────────────────
 def run_tutor_agent_stream(
     user_id: str,
     query: str,
     context_lesson_id: Optional[str] = None,
     history: list = None,
+    image_b64: str = None,
+    image_mime: str = None,
 ):
     """
     Synchronous generator wrapper around TutorAgent.run_stream() for use in Django views.
@@ -626,7 +742,9 @@ def run_tutor_agent_stream(
         async def do_run():
             agent = TutorAgent()
             try:
-                async for chunk in agent.run_stream(user_id, query, context_lesson_id, history):
+                async for chunk in agent.run_stream(
+                    user_id, query, context_lesson_id, history, image_b64, image_mime
+                ):
                     q.put(chunk)
             except Exception as e:
                 logger.exception(f"TutorAgent stream failed: {e}")
