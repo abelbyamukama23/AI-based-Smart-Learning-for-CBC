@@ -73,6 +73,16 @@ function ChatBubble({ role, text, time, flagged }) {
 export default function TutorPage() {
   const location = useLocation();
 
+  // ── Library context (passed from /library via router state) ──
+  const libraryFile = location.state?.libraryFile ?? null;
+
+  // Build a context-aware welcome message when a library file is provided
+  const welcomeText = libraryFile
+    ? `Habari! I'm **Mwalimu**. I can see you want to study **"${libraryFile.title}"**${
+        libraryFile.subject_name ? ` (${libraryFile.subject_name})` : ""
+      }. I've already loaded this material — ask me anything about it and I'll guide you through it step by step. 📖`
+    : "Habari! I'm **Mwalimu**. Ask me anything about your Uganda CBC curriculum — Mathematics, Science, English, SST, and more. Every question is a chance to learn something new! 🌱";
+
   // ── Thread state ──
   const [threads, setThreads]       = useState([]);
   const [activeThreadId, setActiveThreadId] = useState(null);
@@ -83,7 +93,7 @@ export default function TutorPage() {
     {
       id: "welcome",
       role: "ai",
-      text: "Habari! I'm **Mwalimu**. Ask me anything about your Uganda CBC curriculum — Mathematics, Science, English, SST, and more. Every question is a chance to learn something new! 🌱",
+      text: welcomeText,
       time: formatTime(new Date().toISOString()),
       flagged: false,
     },
@@ -95,6 +105,7 @@ export default function TutorPage() {
   const [streamingStatus, setStreamingStatus] = useState("");
   const [error, setError]               = useState(null);
   const [sidebarOpen, setSidebarOpen]   = useState(true);
+  const [libraryBannerVisible, setLibraryBannerVisible] = useState(!!libraryFile);
 
   // ── Voice input state ──
   const [listening, setListening]       = useState(false);
@@ -240,8 +251,22 @@ export default function TutorPage() {
 
     try {
       setStreamingStatus("Thinking...");
+
+      // Prefix the query with library context on the FIRST message of a library session
+      // so Mwalimu knows which material is being studied
+      const isFirstMessage = messages.filter((m) => m.role === "user").length === 0;
+      const queryWithContext =
+        libraryFile && isFirstMessage
+          ? `[Library context: The learner is studying "${libraryFile.title}"` +
+            `${libraryFile.subject_name ? ` | Subject: ${libraryFile.subject_name}` : ""}` +
+            `${libraryFile.class_level_name ? ` | Level: ${libraryFile.class_level_name}` : ""}` +
+            `${libraryFile.description ? ` | Description: ${libraryFile.description}` : ""}` +
+            `${libraryFile.tag_list?.length ? ` | Tags: ${libraryFile.tag_list.join(", ")}` : ""}` +
+            `]\n\nLearner's question: ${text || "Please tell me about this material."}`
+          : text || "Please analyse the attached image of my work.";
+
       const result = await askTutor(
-        text || "Please analyse the attached image of my work.",
+        queryWithContext,
         activeThreadId,
         null,
         (data) => {
@@ -335,6 +360,40 @@ export default function TutorPage() {
             </div>
           </div>
         </div>
+
+        {/* ── Library context banner ──────────────────────────────────────── */}
+        {libraryFile && libraryBannerVisible && (
+          <div className="tutor-library-banner">
+            <span className="tutor-library-banner__icon">📚</span>
+            <div className="tutor-library-banner__text">
+              <strong>Reading:</strong> {libraryFile.title}
+              {libraryFile.subject_name && (
+                <span className="tutor-library-banner__subject"> · {libraryFile.subject_name}</span>
+              )}
+              {libraryFile.class_level_name && (
+                <span className="tutor-library-banner__level"> · {libraryFile.class_level_name}</span>
+              )}
+            </div>
+            {libraryFile.file_url && (
+              <a
+                href={libraryFile.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="tutor-library-banner__link"
+                title="Open file in new tab"
+              >
+                ⬇ Open
+              </a>
+            )}
+            <button
+              className="tutor-library-banner__close"
+              onClick={() => setLibraryBannerVisible(false)}
+              aria-label="Dismiss library context banner"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Messages */}
         <div
