@@ -7,16 +7,22 @@ import { getPost } from "../../services/feed.service";
 import { askTutor } from "../../services/tutor.service";
 import useAuthStore from "../../store/authStore";
 import { PostCard } from "./FeedPage";
-import { extractApiError } from "../../lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { useQuery } from "@tanstack/react-query";
+import styles from "./FeedPage.module.css";
 
 export default function FeedPostDetailPage() {
   const { id } = useParams();
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
 
-  const [post, setPost] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const { data: post, isLoading: loading, isError } = useQuery({
+    queryKey: ["post", id],
+    queryFn: () => getPost(id),
+  });
+
+  const error = isError ? "Could not load post. It may have been deleted." : null;
 
   const [mwalimuResponse, setMwalimuResponse] = useState(null);
   const [askingMwalimu, setAskingMwalimu] = useState(false);
@@ -41,21 +47,7 @@ export default function FeedPostDetailPage() {
   };
 
   useEffect(() => {
-    let active = true;
-    getPost(id)
-      .then((data) => {
-        if (active) setPost(data);
-      })
-      .catch((err) => {
-        if (active) setError(extractApiError(err));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => { active = false; };
-  }, [id]);
 
-  useEffect(() => {
     if (post && location.state?.autoAskMwalimu && !mwalimuResponse && !askingMwalimu) {
       setTimeout(() => handleAskMwalimu(), 0);
     }
@@ -71,7 +63,7 @@ export default function FeedPostDetailPage() {
         <h1 className="page-header__title">Post Detail</h1>
       </div>
 
-      <div className="feed-layout">
+      <div className={styles["feed-layout"]}>
         {loading ? (
           <div className="skeleton skeleton--card" />
         ) : error ? (
@@ -97,7 +89,9 @@ export default function FeedPostDetailPage() {
                   </div>
                 ) : (
                   <div className="prose" style={{ background: "transparent", padding: 0, boxShadow: "none" }}>
-                    {mwalimuResponse}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {mwalimuResponse}
+                    </ReactMarkdown>
                   </div>
                 )}
               </div>

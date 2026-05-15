@@ -74,13 +74,43 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "cbc_backend.wsgi.application"
 
-# ─── Database (SQLite for MVP; swap to PostgreSQL for production) ─────────────
+# ─── Database (MySQL — credentials loaded from .env) ─────────────────────────
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE":   config("DB_ENGINE",   default="django.db.backends.sqlite3"),
+        "NAME":     config("DB_NAME",     default=str(BASE_DIR / "db.sqlite3")),
+        "USER":     config("DB_USER",     default=""),
+        "PASSWORD": config("DB_PASSWORD", default=""),
+        "HOST":     config("DB_HOST",     default=""),
+        "PORT":     config("DB_PORT",     default=""),
+        "OPTIONS": {
+            "charset": "utf8mb4",
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
+
+# ─── Cache Configuration (Cache-Aside Pattern) ────────────────────────────────
+# Uses LocMemCache by default (single-process dev mode).
+# For production (multi-worker), set REDIS_URL in .env to enable shared caching:
+#   REDIS_URL=redis://127.0.0.1:6379/1
+# Then install: pip install django[redis]
+_redis_url = config("REDIS_URL", default="")
+if _redis_url:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": _redis_url,
+            "KEY_PREFIX": "cbc",
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "cbc-rag-cache",
+        }
+    }
 
 # ─── Custom Auth User Model ───────────────────────────────────────────────────
 AUTH_USER_MODEL = "accounts.User"
@@ -127,6 +157,15 @@ REST_FRAMEWORK = {
     # Pagination for feed and curriculum lists
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
+    # Throttling to prevent API abuse
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle"
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "10/minute",
+        "user": "20/minute"
+    },
     # Exception handler (returns consistent error envelopes)
     "EXCEPTION_HANDLER": "cbc_backend.utils.custom_exception_handler",
 }
@@ -154,8 +193,11 @@ CORS_ALLOWED_ORIGINS = [
 ]
 CORS_ALLOW_CREDENTIALS = True
 
-# ─── OpenAI (AI Tutor — FR-AI-01 to FR-AI-05) ────────────────────────────────
-OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
+# ─── LLM API Keys ────────────────────────────────────────────────────────────
+OPENAI_API_KEY  = config("OPENAI_API_KEY",  default="")
+GEMINI_API_KEY  = config("GEMINI_API_KEY",  default="")
+DEEPSEEK_API_KEY= config("DEEPSEEK_API_KEY", default="")
+GROQ_API_KEY    = config("GROQ_API_KEY",    default="")
 
 # ─── Cloudflare R2 File Storage (Library Agent) ───────────────────────────────
 CLOUDFLARE_R2_ACCOUNT_ID      = config("CLOUDFLARE_R2_ACCOUNT_ID", default="")

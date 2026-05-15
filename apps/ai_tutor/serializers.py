@@ -87,3 +87,8 @@ class AskSerializer(serializers.Serializer):
             "Optional UUID of the lesson the learner is currently viewing."
         ),
     )
+    mode = serializers.ChoiceField(
+        choices=["default", "expert", "professor"],
+        default="default",
+        help_text="Agent mode to use: default, expert, or professor."
+    )

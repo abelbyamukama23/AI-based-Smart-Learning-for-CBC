@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <!-- Outer ring gradient: blue top → brown bottom -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#29ABE2"/>
+      <stop offset="50%"  stop-color="#1A7BB8"/>
+      <stop offset="100%" stop-color="#8B5E3C"/>
+    </linearGradient>
+
+    <!-- Leaf 1: dark green -->
+    <linearGradient id="leaf1Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#1B6B3A"/>
+      <stop offset="100%" stop-color="#2E8B57"/>
+    </linearGradient>
+
+    <!-- Leaf 2: medium green -->
+    <linearGradient id="leaf2Grad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#4CAF50"/>
+      <stop offset="100%" stop-color="#81C784"/>
+    </linearGradient>
+
+    <!-- Leaf 3: lime / yellow-green -->
+    <linearGradient id="leaf3Grad" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#8BC34A"/>
+      <stop offset="100%" stop-color="#C5E17A"/>
+    </linearGradient>
+
+    <!-- Shared inner highlight for each leaf -->
+    <radialGradient id="leafShine" cx="30%" cy="30%" r="60%">
+      <stop offset="0%"   stop-color="rgba(255,255,255,0.35)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </radialGradient>
+  </defs>
+
+  <!-- ── Outer ring ─────────────────────────────────────────────────────── -->
+  <circle cx="100" cy="100" r="98" fill="url(#ringGrad)"/>
+  <!-- White inner disc (ring gap) -->
+  <circle cx="100" cy="100" r="82" fill="white"/>
+
+  <!-- ── Three rotating leaves ──────────────────────────────────────────── -->
+  <!--
+    The logo shows three leaf/petal shapes arranged in a pinwheel,
+    each rotated 120° from the previous.  Each leaf is a broad teardrop
+    whose pointed tip sits near centre and whose wide rounded head arcs
+    outward, slightly curled into the rotation.
+  -->
+
+  <!-- Leaf 1 (dark green, pointing ~upper-left) -->
+  <g transform="rotate(0 100 100)">
+    <path d="
+      M 100 100
+      C  68  62,  38  52,  42  92
+      C  44 115,  72 128,  96 108
+      Z
+    " fill="url(#leaf1Grad)"/>
+    <path d="
+      M 100 100
+      C  68  62,  38  52,  42  92
+      C  44 115,  72 128,  96 108
+      Z
+    " fill="url(#leafShine)"/>
+  </g>
+
+  <!-- Leaf 2 (medium green, pointing ~right) -->
+  <g transform="rotate(120 100 100)">
+    <path d="
+      M 100 100
+      C  68  62,  38  52,  42  92
+      C  44 115,  72 128,  96 108
+      Z
+    " fill="url(#leaf2Grad)"/>
+    <path d="
+      M 100 100
+      C  68  62,  38  52,  42  92
+      C  44 115,  72 128,  96 108
+      Z
+    " fill="url(#leafShine)"/>
+  </g>
+
+  <!-- Leaf 3 (lime/yellow-green, pointing ~lower-right) -->
+  <g transform="rotate(240 100 100)">
+    <path d="
+      M 100 100
+      C  68  62,  38  52,  42  92
+      C  44 115,  72 128,  96 108
+      Z
+    " fill="url(#leaf3Grad)"/>
+    <path d="
+      M 100 100
+      C  68  62,  38  52,  42  92
+      C  44 115,  72 128,  96 108
+      Z
+    " fill="url(#leafShine)"/>
+  </g>
+
+  <!-- Small central hub circle -->
+  <circle cx="100" cy="100" r="7" fill="#1B5E20" opacity="0.6"/>
+</svg>

@@ -1,0 +1,129 @@
+/* TeacherBilling.module.css */
+
+.billing-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 160px);
+  padding: var(--space-8);
+  animation: slideUp var(--transition-slow);
+}
+
+.billing-card {
+  background: var(--color-white);
+  border: 1px solid var(--color-grey-200);
+  border-radius: var(--radius-xl);
+  padding: var(--space-10);
+  max-width: 600px;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle background glow effect */
+.billing-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  background: linear-gradient(90deg, var(--color-primary-400), var(--color-primary-600));
+}
+
+.billing-icon-ring {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: var(--color-primary-50);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary-600);
+  box-shadow: 0 0 0 8px var(--color-primary-50),
+              0 0 0 16px rgba(41, 171, 226, 0.05); /* matches Mwalimu blue */
+  margin-bottom: var(--space-4);
+  animation: pulse 3s infinite ease-in-out;
+}
+
+@keyframes pulse {
+  0%   { box-shadow: 0 0 0 8px var(--color-primary-50), 0 0 0 16px rgba(41, 171, 226, 0.05); }
+  50%  { box-shadow: 0 0 0 12px var(--color-primary-50), 0 0 0 24px rgba(41, 171, 226, 0.05); }
+  100% { box-shadow: 0 0 0 8px var(--color-primary-50), 0 0 0 16px rgba(41, 171, 226, 0.05); }
+}
+
+.billing-title {
+  font-size: var(--font-size-2xl);
+  font-weight: 800;
+  color: var(--color-grey-900);
+  letter-spacing: -0.02em;
+}
+
+.billing-desc {
+  font-size: var(--font-size-base);
+  color: var(--color-grey-600);
+  line-height: 1.6;
+  max-width: 480px;
+}
+
+.billing-features {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.feature-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-grey-50);
+  border: 1px solid var(--color-grey-200);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-grey-700);
+  transition: all var(--transition-fast);
+}
+
+.feature-chip:hover {
+  background: var(--color-white);
+  border-color: var(--color-primary-300);
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-2px);
+}
+
+.coming-soon-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: rgba(41, 171, 226, 0.1); /* Primary tint */
+  color: var(--color-primary-700);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  margin-top: var(--space-6);
+  border: 1px solid rgba(41, 171, 226, 0.2);
+}
+
+.badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary-500);
+  animation: blink 2s infinite ease-in-out;
+}
+
+@keyframes blink {
+  0% { opacity: 0.4; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 0.4; transform: scale(0.8); }
+}

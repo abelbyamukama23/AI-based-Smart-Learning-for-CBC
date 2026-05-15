@@ -8,10 +8,14 @@
  *  • Click "Read with Mwalimu" to open the tutor with the material as context
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getLibraryFiles, getSubjects, getLevels } from "../../services/library.service";
 import useAuthStore from "../../store/authStore";
+import { useQuery } from "@tanstack/react-query";
+import { useDebounce } from "../../hooks/useDebounce";
+import { IconLibrary, IconSearch, IconChevronDown } from "../../components/Icons";
+import styles from "./LibraryPage.module.css";
 
 // ── File type config ──────────────────────────────────────────────────────────
 const FILE_TYPE_META = {
@@ -33,12 +37,6 @@ export default function LibraryPage() {
   const user = useAuthStore((s) => s.user);
   const role = user?.role?.toLowerCase() === "teacher" ? "teacher" : "learner";
 
-  const [files,    setFiles]    = useState([]);
-  const [subjects, setSubjects] = useState([]);
-  const [levels,   setLevels]   = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState(null);
-
   const [filters, setFilters] = useState({
     search:       "",
     subject_name: "",
@@ -46,30 +44,30 @@ export default function LibraryPage() {
     type:         "",
   });
 
+
   // ── Load filter options on mount ──────────────────────────────────────────
-  useEffect(() => {
-    Promise.all([getSubjects(), getLevels()])
-      .then(([subs, lvls]) => {
-        setSubjects(subs);
-        setLevels(lvls);
-      })
-      .catch(console.error);
-  }, []);
+  const { data: subjects = [] } = useQuery({
+    queryKey: ["subjects", "library"],
+    queryFn: getSubjects,
+    staleTime: Infinity,
+  });
+
+  const { data: levels = [] } = useQuery({
+    queryKey: ["levels", "library"],
+    queryFn: getLevels,
+    staleTime: Infinity,
+  });
+
+  const debouncedSearch = useDebounce(filters.search, 350);
 
   // ── Fetch files whenever filters change ───────────────────────────────────
-  const fetchFiles = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    getLibraryFiles(filters)
-      .then(setFiles)
-      .catch(() => setError("Could not load library. Please try again."))
-      .finally(() => setLoading(false));
-  }, [filters]);
+  const { data: filesData, isLoading: loading, isError, refetch: fetchFiles } = useQuery({
+    queryKey: ["libraryFiles", { ...filters, search: debouncedSearch }],
+    queryFn: () => getLibraryFiles({ ...filters, search: debouncedSearch }),
+  });
 
-  useEffect(() => {
-    const timer = setTimeout(fetchFiles, 350); // debounce search input
-    return () => clearTimeout(timer);
-  }, [fetchFiles]);
+  const files = filesData ?? [];
+  const error = isError ? "Could not load library. Please try again." : null;
 
   const handleFilterChange = (key, value) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -82,43 +80,43 @@ export default function LibraryPage() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="library-page">
+    <div className={styles["library-page"]}>
       {/* ── Header ───────────────────────────────────────────────────────── */}
-      <div className="library-header">
-        <div className="library-header__text">
-          <h1 className="library-header__title">
-            <span className="library-header__icon">📚</span>
+      <div className={styles["library-header"]}>
+        <div className={styles["library-header__text"]}>
+          <h1 className={styles["library-header__title"]}>
+            <span className={styles["library-header__icon"]}><IconLibrary size={36} /></span>
             CBC Library
           </h1>
-          <p className="library-header__subtitle">
+          <p className={styles["library-header__subtitle"]}>
             Browse textbooks, maps, and study materials from the Uganda
             Competence-Based Curriculum. Open any resource and Mwalimu will
             guide you through it.
           </p>
         </div>
-        <div className="library-header__stats">
-          <span className="library-stat">
+        <div className={styles["library-header__stats"]}>
+          <span className={styles["library-stat"]}>
             <strong>{files.length}</strong> resources
           </span>
         </div>
       </div>
 
       {/* ── Filter bar ───────────────────────────────────────────────────── */}
-      <div className="library-filters">
+      <div className={styles["library-filters"]}>
         {/* Search */}
-        <div className="library-search">
-          <span className="library-search__icon">🔍</span>
+        <div className={styles["library-search"]}>
+          <span className={styles["library-search__icon"]}><IconSearch size={18} /></span>
           <input
             id="library-search-input"
-            type="text"
+            type="search"
             placeholder="Search textbooks, maps, topics..."
             value={filters.search}
             onChange={(e) => handleFilterChange("search", e.target.value)}
-            className="library-search__input"
+            className={styles["library-search__input"]}
           />
           {filters.search && (
             <button
-              className="library-search__clear"
+              className={styles["library-search__clear"]}
               onClick={() => handleFilterChange("search", "")}
               aria-label="Clear search"
             >
@@ -127,64 +125,80 @@ export default function LibraryPage() {
           )}
         </div>
 
+        <div className={styles["library-filters__divider"]} />
+
         {/* Subject */}
-        <select
-          id="library-subject-filter"
-          className="library-select"
-          value={filters.subject_name}
-          onChange={(e) => handleFilterChange("subject_name", e.target.value)}
-        >
-          <option value="">All Subjects</option>
-          {subjects.map((s) => (
-            <option key={s.id} value={s.subject_name}>
-              {s.subject_name}
-            </option>
-          ))}
-        </select>
+        <div className={styles["library-select-wrapper"]}>
+          <select
+            id="library-subject-filter"
+            className={styles["library-select"]}
+            value={filters.subject_name}
+            onChange={(e) => handleFilterChange("subject_name", e.target.value)}
+          >
+            <option value="">All Subjects</option>
+            {subjects.map((s) => (
+              <option key={s.id} value={s.subject_name}>
+                {s.subject_name}
+              </option>
+            ))}
+          </select>
+          <span className={styles["library-select-icon"]}><IconChevronDown size={16} /></span>
+        </div>
+
+        <div className={styles["library-filters__divider"]} />
 
         {/* Level */}
-        <select
-          id="library-level-filter"
-          className="library-select"
-          value={filters.level_name}
-          onChange={(e) => handleFilterChange("level_name", e.target.value)}
-        >
-          <option value="">All Levels</option>
-          {levels.map((l) => (
-            <option key={l.id} value={l.level_name}>
-              {l.level_name}
-            </option>
-          ))}
-        </select>
+        <div className={styles["library-select-wrapper"]}>
+          <select
+            id="library-level-filter"
+            className={styles["library-select"]}
+            value={filters.level_name}
+            onChange={(e) => handleFilterChange("level_name", e.target.value)}
+          >
+            <option value="">All Levels</option>
+            {levels.map((l) => (
+              <option key={l.id} value={l.level_name}>
+                {l.level_name}
+              </option>
+            ))}
+          </select>
+          <span className={styles["library-select-icon"]}><IconChevronDown size={16} /></span>
+        </div>
+
+        <div className={styles["library-filters__divider"]} />
 
         {/* Type */}
-        <select
-          id="library-type-filter"
-          className="library-select"
-          value={filters.type}
-          onChange={(e) => handleFilterChange("type", e.target.value)}
-        >
-          <option value="">All Types</option>
-          {Object.entries(FILE_TYPE_META).map(([key, meta]) => (
-            <option key={key} value={key}>
-              {meta.icon} {meta.label}
-            </option>
-          ))}
-        </select>
+        <div className={styles["library-select-wrapper"]}>
+          <select
+            id="library-type-filter"
+            className={styles["library-select"]}
+            value={filters.type}
+            onChange={(e) => handleFilterChange("type", e.target.value)}
+          >
+            <option value="">All Types</option>
+            {Object.entries(FILE_TYPE_META).map(([key, meta]) => (
+              <option key={key} value={key}>
+                {meta.icon} {meta.label}
+              </option>
+            ))}
+          </select>
+          <span className={styles["library-select-icon"]}><IconChevronDown size={16} /></span>
+        </div>
 
         {/* Clear all */}
         {Object.values(filters).some(Boolean) && (
           <button
             id="library-clear-filters"
-            className="library-clear-btn"
+            className={styles["library-clear-btn"]}
             onClick={() =>
               setFilters({ search: "", subject_name: "", level_name: "", type: "" })
             }
           >
-            Clear filters
+            Clear Filters
           </button>
         )}
       </div>
+
 
       {/* ── Content ──────────────────────────────────────────────────────── */}
       {loading ? (
@@ -194,7 +208,7 @@ export default function LibraryPage() {
       ) : files.length === 0 ? (
         <LibraryEmpty />
       ) : (
-        <div className="library-grid">
+        <div className={styles["library-grid"]}>
           {files.map((file) => (
             <LibraryCard
               key={file.id}
@@ -214,29 +228,29 @@ function LibraryCard({ file, onReadWithMwalimu }) {
   const tags = file.tag_list?.slice(0, 3) ?? [];
 
   return (
-    <article className="library-card" style={{ "--card-accent": meta.color }}>
+    <article className={styles["library-card"]} style={{ "--card-accent": meta.color }}>
       {/* Type badge */}
-      <div className="library-card__type-badge" style={{ background: meta.bg, color: meta.color }}>
-        <span className="library-card__type-icon">{meta.icon}</span>
-        <span className="library-card__type-label">{meta.label}</span>
+      <div className={styles["library-card__type-badge"]} style={{ background: meta.bg, color: meta.color }}>
+        <span className={styles["library-card__type-icon"]}>{meta.icon}</span>
+        <span className={styles["library-card__type-label"]}>{meta.label}</span>
       </div>
 
       {/* Content */}
-      <div className="library-card__body">
-        <h2 className="library-card__title">{file.title}</h2>
+      <div className={styles["library-card__body"]}>
+        <h2 className={styles["library-card__title"]}>{file.title}</h2>
         {file.description && (
-          <p className="library-card__desc">{file.description}</p>
+          <p className={styles["library-card__desc"]}>{file.description}</p>
         )}
 
         {/* Meta row */}
-        <div className="library-card__meta">
+        <div className={styles["library-card__meta"]}>
           {file.subject_name && (
-            <span className="library-card__meta-pill library-card__meta-pill--subject">
+            <span className={`${styles["library-card__meta-pill"]} ${styles["library-card__meta-pill--subject"]}`}>
               {file.subject_name}
             </span>
           )}
           {file.class_level_name && (
-            <span className="library-card__meta-pill library-card__meta-pill--level">
+            <span className={`${styles["library-card__meta-pill"]} ${styles["library-card__meta-pill--level"]}`}>
               {file.class_level_name}
             </span>
           )}
@@ -244,9 +258,9 @@ function LibraryCard({ file, onReadWithMwalimu }) {
 
         {/* Tags */}
         {tags.length > 0 && (
-          <div className="library-card__tags">
+          <div className={styles["library-card__tags"]}>
             {tags.map((tag) => (
-              <span key={tag} className="library-card__tag">
+              <span key={tag} className={styles["library-card__tag"]}>
                 #{tag}
               </span>
             ))}
@@ -254,15 +268,15 @@ function LibraryCard({ file, onReadWithMwalimu }) {
         )}
 
         {file.source && (
-          <p className="library-card__source">Source: {file.source}</p>
+          <p className={styles["library-card__source"]}>Source: {file.source}</p>
         )}
       </div>
 
       {/* Actions */}
-      <div className="library-card__actions">
+      <div className={styles["library-card__actions"]}>
         <button
           id={`mwalimu-btn-${file.id}`}
-          className="library-card__btn library-card__btn--primary"
+          className={`${styles["library-card__btn"]} ${styles["library-card__btn--primary"]}`}
           onClick={() => onReadWithMwalimu(file)}
         >
           <span>🤖</span>
@@ -273,7 +287,7 @@ function LibraryCard({ file, onReadWithMwalimu }) {
             href={file.file_url}
             target="_blank"
             rel="noopener noreferrer"
-            className="library-card__btn library-card__btn--secondary"
+            className={`${styles["library-card__btn"]} ${styles["library-card__btn--secondary"]}`}
           >
             <span>⬇</span>
             Open File
@@ -283,7 +297,7 @@ function LibraryCard({ file, onReadWithMwalimu }) {
 
       {/* RAG indexed indicator */}
       {file.is_indexed && (
-        <div className="library-card__indexed-badge" title="This resource has been indexed for Mwalimu search">
+        <div className={styles["library-card__indexed-badge"]} title="This resource has been indexed for Mwalimu search">
           AI Ready
         </div>
       )}
@@ -294,9 +308,9 @@ function LibraryCard({ file, onReadWithMwalimu }) {
 // ── States ────────────────────────────────────────────────────────────────────
 function LibraryLoading() {
   return (
-    <div className="library-grid">
+    <div className={styles["library-grid"]}>
       {[1, 2, 3, 4, 5, 6].map((i) => (
-        <div key={i} className="library-card library-card--skeleton">
+        <div key={i} className={`${styles["library-card"]} ${styles["library-card--skeleton"]}`}>
           <div className="skeleton skeleton--badge" />
           <div className="skeleton skeleton--title" />
           <div className="skeleton skeleton--text" />
@@ -309,10 +323,10 @@ function LibraryLoading() {
 
 function LibraryEmpty() {
   return (
-    <div className="library-empty">
-      <div className="library-empty__icon">📭</div>
-      <h3 className="library-empty__title">No resources found</h3>
-      <p className="library-empty__text">
+    <div className={styles["library-empty"]}>
+      <div className={styles["library-empty__icon"]}>📭</div>
+      <h3 className={styles["library-empty__title"]}>No resources found</h3>
+      <p className={styles["library-empty__text"]}>
         Try adjusting your filters or search terms. More curriculum materials are
         added regularly by the admin and Mwalimu's Research Agent.
       </p>
@@ -322,10 +336,10 @@ function LibraryEmpty() {
 
 function LibraryError({ message, onRetry }) {
   return (
-    <div className="library-error">
-      <div className="library-error__icon">⚠️</div>
+    <div className={styles["library-error"]}>
+      <div className={styles["library-error__icon"]}>⚠️</div>
       <p>{message}</p>
-      <button className="library-card__btn library-card__btn--primary" onClick={onRetry}>
+      <button className={`${styles["library-card__btn"]} ${styles["library-card__btn--primary"]}`} onClick={onRetry}>
         Try again
       </button>
     </div>

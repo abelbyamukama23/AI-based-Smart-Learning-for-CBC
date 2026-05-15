@@ -71,6 +71,9 @@ api.interceptors.response.use(
         });
         const newAccess = data.access;
         localStorage.setItem("access_token", newAccess);
+        if (data.refresh) {
+          localStorage.setItem("refresh_token", data.refresh);
+        }
         processQueue(null, newAccess);
         originalRequest.headers.Authorization = `Bearer ${newAccess}`;
         return api(originalRequest);

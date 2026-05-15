@@ -5,6 +5,7 @@ django-cors-headers>=4.3,<5.0
 django-filter>=24.0,<25.0
 python-decouple>=3.8,<4.0
 Pillow>=10.0,<11.0
+mysqlclient>=2.2,<3.0   # MySQL database driver
 
 # AI / LLM Providers — LLM Race Pattern (Gemini | DeepSeek | Claude | Groq)
 openai>=1.0,<2.0              # DeepSeek uses OpenAI-compatible SDK
@@ -30,3 +31,8 @@ pypdf>=4.0,<7.0               # PDF text extraction
 
 # Async support
 asgiref>=3.7,<4.0
+
+# Testing
+pytest>=9.0,<10.0
+pytest-django>=4.9,<5.0
+pytest-asyncio>=1.0,<2.0

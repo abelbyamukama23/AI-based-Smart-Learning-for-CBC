@@ -156,3 +156,56 @@ class ResearchEntry(models.Model):
 
     def __str__(self):
         return f"[{self.status}] {self.topic} ({self.relevance_score:.2f})"
+
+# ── Knowledge Graph Models ────────────────────────────────────────────────────
+
+class NodeType(models.TextChoices):
+    SUBJECT    = "SUBJECT",    "Subject"
+    COMPETENCY = "COMPETENCY", "Competency"
+    LESSON     = "LESSON",     "Lesson"
+    CONCEPT    = "CONCEPT",    "Concept"
+
+class CurriculumNode(models.Model):
+    """
+    A node in the Curriculum Knowledge Graph.
+    Can represent a Subject, Competency, Lesson, or an abstract Concept.
+    """
+    id            = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    node_type     = models.CharField(max_length=20, choices=NodeType.choices, db_index=True)
+    name          = models.CharField(max_length=255, db_index=True)
+    description   = models.TextField(blank=True)
+    chroma_doc_id = models.CharField(max_length=255, null=True, blank=True, help_text="Links to ChromaDB vector document")
+    created_at    = models.DateTimeField(auto_now_add=True)
+    modified_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Curriculum Node"
+        verbose_name_plural = "Curriculum Nodes"
+
+    def __str__(self):
+        return f"[{self.node_type}] {self.name}"
+
+class EdgeType(models.TextChoices):
+    REQUIRES   = "REQUIRES",   "Requires / Prerequisite"
+    BELONGS_TO = "BELONGS_TO", "Belongs To"
+    TEACHES    = "TEACHES",    "Teaches"
+    RELATES_TO = "RELATES_TO", "Relates To"
+
+class CurriculumEdge(models.Model):
+    """
+    A directed relationship between two nodes in the Knowledge Graph.
+    """
+    id           = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source       = models.ForeignKey(CurriculumNode, on_delete=models.CASCADE, related_name='outgoing_edges')
+    target       = models.ForeignKey(CurriculumNode, on_delete=models.CASCADE, related_name='incoming_edges')
+    relationship = models.CharField(max_length=20, choices=EdgeType.choices, db_index=True)
+    weight       = models.FloatField(default=1.0, help_text="Strength or importance of this relationship")
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('source', 'target', 'relationship')
+        verbose_name = "Curriculum Edge"
+        verbose_name_plural = "Curriculum Edges"
+
+    def __str__(self):
+        return f"{self.source.name} --[{self.relationship}]--> {self.target.name}"

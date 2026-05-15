@@ -1,0 +1,109 @@
+.collaborate-container {
+  min-height: 80vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8);
+  background: radial-gradient(ellipse at 60% 20%, rgba(99,102,241,0.06) 0%, transparent 60%);
+}
+
+.collaborate-card {
+  background: var(--color-white);
+  border: 1px solid var(--color-grey-200);
+  border-radius: var(--radius-xl, 20px);
+  padding: var(--space-12, 3rem) var(--space-10, 2.5rem);
+  max-width: 520px;
+  width: 100%;
+  text-align: center;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.06);
+  animation: slideUp 0.5s ease;
+}
+
+.collaborate-icon-ring {
+  width: 88px;
+  height: 88px;
+  margin: 0 auto var(--space-6);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+  color: #4f46e5;
+  border: 2px solid #c7d2fe;
+  box-shadow: 0 0 0 8px rgba(99,102,241,0.07);
+}
+
+.collaborate-title {
+  font-size: var(--font-size-2xl);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--color-grey-900);
+  margin: 0 0 var(--space-3);
+}
+
+.collaborate-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-grey-500);
+  line-height: 1.7;
+  margin: 0 0 var(--space-8);
+}
+
+.collaborate-features {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+  margin-bottom: var(--space-8);
+}
+
+.feature-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 16px;
+  background: var(--color-grey-50);
+  border: 1px solid var(--color-grey-200);
+  border-radius: var(--radius-full, 9999px);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-grey-700);
+  transition: all 0.2s ease;
+}
+
+.feature-chip:hover {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #4f46e5;
+  transform: translateY(-1px);
+}
+
+.coming-soon-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: linear-gradient(135deg, #f0fdf4, #dcfce7);
+  border: 1px solid #bbf7d0;
+  border-radius: var(--radius-full, 9999px);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: #15803d;
+}
+
+.badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.75); }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

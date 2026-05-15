@@ -28,7 +28,7 @@ os.environ["USE_OLLAMA"]        = config("USE_OLLAMA",        default="false")
 import django
 django.setup()
 
-from apps.ai_tutor.agent import run_tutor_agent
+from apps.ai_tutor.agent import run_tutor_agent_stream
 
 # ---- Test parameters -------------------------------------------------------
 TEST_USER_ID   = "00000000-0000-0000-0000-000000000001"  # fake UUID - profile fetch gracefully fails
@@ -41,20 +41,23 @@ print("CBC TutorAgent -- Live Test (DeepSeek)")
 print(SEP)
 print(f"Query: {TEST_QUERY}\n")
 
-response_text, is_out_of_scope, provider_used, tool_calls_log = run_tutor_agent(
+final_response = ""
+print("Streaming response:")
+for chunk in run_tutor_agent_stream(
     user_id=TEST_USER_ID,
     query=TEST_QUERY,
     context_lesson_id=TEST_LESSON_ID,
-)
+):
+    print(".", end="", flush=True)
+    try:
+        import json
+        data = json.loads(chunk)
+        if data.get("type") == "final":
+            final_response = data.get("content", "")
+    except:
+        pass
 
-print(f"Provider that won the race : {provider_used}")
-print(f"Flagged out of scope        : {is_out_of_scope}")
-print(f"MCP Tools called            : {len(tool_calls_log)}")
-if tool_calls_log:
-    for tc in tool_calls_log:
-        print(f"  Round {tc['round']} -> {tc['tool']}({tc['args']})")
-print()
-print("-" * 60)
-print("RESPONSE:")
-print(response_text)
+print("\n\n" + "-" * 60)
+print("FINAL RESPONSE:")
+print(final_response)
 print("-" * 60)

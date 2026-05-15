@@ -1,93 +1,97 @@
+"""
+apps/accounts/serializers.py
+─────────────────────────────
+Serializers are pure I/O adapters — they validate and shape data only.
+All business logic has been moved to apps/accounts/services.py.
+
+Design Principle (SRP): Serializers no longer orchestrate DB writes.
+Design Principle (DIP): RegisterSerializer delegates to UserRegistrationService.
+"""
+
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from rest_framework_simplejwt.tokens import RefreshToken
-from .models import User, Learner, School, Role, ClassLevel
+
+from .models import Learner, Role, School, User
+
 
 class SchoolSerializer(serializers.ModelSerializer):
     class Meta:
         model = School
-        fields = ['id', 'school_name', 'region', 'district']
+        fields = ["id", "school_name", "region", "district"]
+
 
 class LearnerProfileSerializer(serializers.ModelSerializer):
     school = SchoolSerializer(read_only=True)
+
     class Meta:
         model = Learner
-        fields = ['class_level', 'enrolled_at', 'school']
+        fields = ["class_level", "enrolled_at", "school", "preferred_methodology", "preferred_language", "familiar_region", "preferred_subjects", "theme"]
+
 
 class UserSerializer(serializers.ModelSerializer):
     learner_profile = LearnerProfileSerializer(read_only=True)
-    
+
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'role', 'is_active', 'date_joined', 'learner_profile']
+        fields = ["id", "email", "username", "first_name", "last_name", "role", "is_active", "date_joined", "learner_profile"]
+
 
 class RegisterSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
-    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    username = serializers.CharField(max_length=150, required=False, allow_blank=True)
-    role = serializers.ChoiceField(choices=Role.choices, default=Role.LEARNER)
-    
-    class_level = serializers.ChoiceField(choices=ClassLevel.choices, required=False)
-    school_name = serializers.CharField(max_length=200, required=False, allow_blank=True)
-    region = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    district = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    """Input validator for POST /api/v1/auth/register/."""
 
-    def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("A user with that email already exists.")
-        return value
-        
+    email      = serializers.EmailField()
+    password   = serializers.CharField(write_only=True, min_length=8)
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    last_name  = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    username   = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    role       = serializers.ChoiceField(choices=Role.choices, default=Role.LEARNER)
+
+    # Learner-specific fields (required when role=LEARNER)
+    class_level  = serializers.ChoiceField(choices=[("S1","S1"),("S2","S2"),("S3","S3"),("S4","S4"),("S5","S5"),("S6","S6")], required=False)
+    school_name  = serializers.CharField(max_length=200, required=False, allow_blank=True)
+    region       = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    district     = serializers.CharField(max_length=100, required=False, allow_blank=True)
+
     def validate(self, data):
-        role = data.get('role', Role.LEARNER)
+        """Cross-field validation only — uniqueness checked in the service."""
+        role = data.get("role", Role.LEARNER)
         if role == Role.LEARNER:
-            required_learner_fields = ['class_level', 'school_name', 'region', 'district']
-            for field in required_learner_fields:
+            for field in ["class_level", "school_name", "region", "district"]:
                 if not data.get(field):
-                    raise serializers.ValidationError({field: "This field is required for learners."})
+                    raise serializers.ValidationError(
+                        {field: "This field is required for learners."}
+                    )
         return data
 
     def create(self, validated_data):
-        role = validated_data.get('role', Role.LEARNER)
-        username = validated_data.get('username') or validated_data['email'].split('@')[0]
-        
-        # 1. Create User
-        user = User.objects.create_user(
-            username=username,
-            email=validated_data['email'],
-            password=validated_data['password'],
-            first_name=validated_data.get('first_name', ''),
-            last_name=validated_data.get('last_name', ''),
-            role=role
-        )
+        """
+        Delegates to UserRegistrationService.
+        The serializer never touches the ORM directly.
+        """
+        from .services import UserRegistrationService
+        from .exceptions import DuplicateEmailError, InvalidRoleDataError
+        try:
+            return UserRegistrationService.register(validated_data)
+        except DuplicateEmailError as e:
+            raise serializers.ValidationError({"email": str(e)})
+        except InvalidRoleDataError as e:
+            raise serializers.ValidationError({"non_field_errors": str(e)})
 
-        # 2. Create Learner Profile if applicable
-        if role == Role.LEARNER:
-            school, _ = School.objects.get_or_create(
-                school_name=validated_data.get('school_name'),
-                defaults={
-                    'region': validated_data.get('region'),
-                    'district': validated_data.get('district')
-                }
-            )
-
-            Learner.objects.create(
-                user=user,
-                school=school,
-                class_level=validated_data.get('class_level')
-            )
-        return user
 
 class CBCTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """
+    JWT token with minimal custom claims.
+
+    Design Principle — Claims Minimization:
+      Only embed STABLE, IMMUTABLE identity facts.
+      Dynamic attributes (class_level) are fetched from the DB per-request,
+      not embedded in a 60-minute-lived token that would go stale on promotion.
+    """
+
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
-
-        # Add custom claims
-        token['role'] = user.role
-        token['email'] = user.email
-        if user.role == Role.LEARNER and hasattr(user, 'learner_profile'):
-            token['class_level'] = user.learner_profile.class_level
-            
+        # Stable identity claims only
+        token["role"] = user.role
+        # Removed: email, class_level — these are now served from /api/v1/auth/profile/
         return token

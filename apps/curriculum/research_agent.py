@@ -321,20 +321,26 @@ def _resolve_level(name: str):
 
 
 def _quick_index(file_id: str, title: str, text: str, subject: str, class_level: str):
-    """Immediately embed a single document into ChromaDB without a full rebuild."""
-    try:
-        from apps.curriculum.rag_service import _get_chroma_client, _get_embed_model
+    """
+    Immediately embed a single document into ChromaDB without a full rebuild.
 
-        client = _get_chroma_client()
-        model  = _get_embed_model()
-        col    = client.get_or_create_collection("curriculum_files", metadata={"hnsw:space": "cosine"})
-        doc_id = f"file_{file_id}"
-        embedding = model.encode(text[:4000]).tolist()
+    Bug fix: previously called `_get_embed_model()` which was removed when the
+    embedding backend switched from sentence-transformers to the Gemini API.
+    Now correctly calls `embed_for_indexing()` from the updated rag_service.
+    """
+    try:
+        from apps.curriculum.rag_service import _get_chroma_client, embed_for_indexing
+
+        client    = _get_chroma_client()
+        embedding = embed_for_indexing(text[:4000])   # ← Correct API (was _get_embed_model)
+        col       = client.get_or_create_collection(
+            "curriculum_files", metadata={"hnsw:space": "cosine"}
+        )
         col.upsert(
-            ids=[doc_id],
-            embeddings=[embedding],
-            documents=[text[:4000]],
-            metadatas=[{
+            ids        = [f"file_{file_id}"],
+            embeddings = [embedding],
+            documents  = [text[:4000]],
+            metadatas  = [{
                 "title":       title,
                 "file_type":   "auto",
                 "subject":     subject,
@@ -344,5 +350,7 @@ def _quick_index(file_id: str, title: str, text: str, subject: str, class_level:
                 "file_id":     file_id,
             }],
         )
+        logger.info("Quick-indexed file %s into ChromaDB", file_id)
     except Exception as e:
-        logger.warning(f"Quick index failed: {e}")
+        logger.warning("Quick index failed for %s: %s", file_id, e)
+

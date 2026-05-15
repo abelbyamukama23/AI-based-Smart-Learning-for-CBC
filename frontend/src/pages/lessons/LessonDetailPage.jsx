@@ -5,9 +5,9 @@
  * Returns: LessonDetailSerializer — includes body_html, competencies, video_url, image
  */
 
-import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getLessonDetail } from "../../services/curriculum.service";
+import { useQuery } from "@tanstack/react-query";
 
 function Skeleton({ className }) {
   return <div className={`skeleton ${className || ""}`} />;
@@ -15,16 +15,13 @@ function Skeleton({ className }) {
 
 export default function LessonDetailPage() {
   const { id } = useParams();
-  const [lesson, setLesson] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
 
-  useEffect(() => {
-    getLessonDetail(id)
-      .then(setLesson)
-      .catch(() => setError("Lesson not found or unavailable."))
-      .finally(() => setLoading(false));
-  }, [id]);
+  const { data: lesson, isLoading: loading, isError } = useQuery({
+    queryKey: ["lesson", id],
+    queryFn: () => getLessonDetail(id),
+  });
+
+  const error = isError ? "Lesson not found or unavailable." : null;
 
   if (loading) {
     return (

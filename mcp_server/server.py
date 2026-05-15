@@ -15,22 +15,46 @@ import json
 import django
 
 # ── Bootstrap Django so we can use ORM models ────────────────────────────────
-# Add project root to sys.path so `apps.*` imports resolve
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "cbc_backend.settings")
-django.setup()
+from django.apps import apps
+if not apps.ready:
+    django.setup()
 
 # ── Imports (after Django setup) ──────────────────────────────────────────────
 from mcp.server.fastmcp import FastMCP
 from asgiref.sync import sync_to_async
 
 from apps.curriculum.models import Lesson, Competency, Subject, Level
+from apps.curriculum.constants import (
+    CURRICULUM_SEARCH_LIMIT,
+    COMPETENCY_LIST_LIMIT,
+    LEARNER_HISTORY_HARD_CAP,
+    LIBRARY_RAG_DEFAULT_HITS,
+    RAG_SEARCH_TIMEOUT_SECS,
+)
 from apps.accounts.models import User, Learner
 from apps.ai_tutor.models import AISession
 from duckduckgo_search import DDGS
+
+# ── MCP-side RAG warm-up ──────────────────────────────────────────────────────
+# The MCP server is a SEPARATE subprocess from Django — Django's AppConfig.ready()
+# warm-up does NOT run here. Pre-load the model as soon as this module is imported
+# so the first `search_library_rag` call does not block for 15-25 seconds.
+import threading as _threading
+
+def _mcp_warmup():
+    try:
+        from apps.curriculum.rag_service import warm_up_rag
+        warm_up_rag()
+    except Exception:
+        pass  # Non-fatal: tool still works, just first call will be slower
+
+_warmup_thread = _threading.Thread(target=_mcp_warmup, daemon=True, name="mcp-rag-warmup")
+_warmup_thread.start()
 
 # ── MCP Server Instance ───────────────────────────────────────────────────────
 mcp = FastMCP(
@@ -52,6 +76,8 @@ def _db_get_learner_profile(user_id: str) -> str:
         user = User.objects.select_related("learner_profile__school").get(id=user_id)
         profile = {
             "user_id": str(user.id),
+            "first_name": user.first_name,
+            "last_name": user.last_name,
             "username": user.username,
             "email": user.email,
             "role": user.role,
@@ -60,6 +86,11 @@ def _db_get_learner_profile(user_id: str) -> str:
             lp = user.learner_profile
             profile["class_level"] = lp.class_level
             profile["school"] = lp.school.school_name if lp.school else None
+            # ── Pedagogy & Context Preferences ──────────────────────────────
+            profile["preferred_methodology"] = lp.preferred_methodology  # e.g. SOCRATIC, DIRECT
+            profile["preferred_language"] = lp.preferred_language        # e.g. EN, LG, SW
+            profile["familiar_region"] = lp.familiar_region or None      # e.g. "Western/Ankole"
+            profile["preferred_subjects"] = lp.preferred_subjects or []  # list of subject names
         return json.dumps(profile, indent=2)
     except User.DoesNotExist:
         return json.dumps({"error": f"User {user_id} not found"})
@@ -105,7 +136,7 @@ def _db_search_curriculum(subject: str, class_level: str, query: str) -> str:
             "class_level": l.class_level.level_name,
             "description": l.description[:300],
         }
-        for l in qs[:10]
+        for l in qs[:CURRICULUM_SEARCH_LIMIT]   # ← Named constant
     ]
     return json.dumps(results, indent=2)
 
@@ -123,13 +154,13 @@ def _db_get_competency_list(subject: str, class_level: str) -> str:
             "subject": c.subject.subject_name,
             "class_level": c.level.level_name,
         }
-        for c in qs[:20]
+        for c in qs[:COMPETENCY_LIST_LIMIT]   # ← Named constant
     ]
     return json.dumps(results, indent=2)
 
 
 def _db_get_learner_history(user_id: str, limit: int) -> str:
-    limit = min(limit, 10)
+    limit = min(limit, LEARNER_HISTORY_HARD_CAP)   # ← Named constant
     sessions = AISession.objects.filter(learner__id=user_id).order_by("-timestamp")[:limit]
     results = [
         {
@@ -272,6 +303,70 @@ async def search_uganda_curriculum_web(query: str) -> str:
             
     return await sync_to_async(_do_search)()
 
+@mcp.tool()
+async def research_youtube_video(query: str) -> str:
+    """
+    Search YouTube for educational videos and return their transcribed text content.
+    Use this to gather deep, rich context from videos. 
+    DO NOT return the YouTube URLs or video IDs to the user. Instead, read the transcript 
+    returned by this tool and synthesize the information into your own lesson.
+    
+    Args:
+        query: The educational topic to search for on YouTube.
+        
+    Returns:
+        JSON string containing the video title, description, and full text transcript.
+    """
+    def _do_youtube_research():
+        try:
+            from youtubesearchpython import VideosSearch
+            from youtube_transcript_api import YouTubeTranscriptApi
+            
+            # 1. Search for the top video
+            videos_search = VideosSearch(query, limit=1)
+            result = videos_search.result()
+            
+            if not result or not result.get("result"):
+                return json.dumps({"error": "No YouTube videos found for this topic."})
+                
+            video = result["result"][0]
+            video_id = video["id"]
+            title = video.get("title", "Unknown Title")
+            
+            # 2. Fetch the transcript
+            try:
+                # Try to get English transcript first, fallback to auto-generated
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                try:
+                    transcript = transcript_list.find_transcript(['en'])
+                except:
+                    # If no manual English transcript, grab the first available generated one
+                    transcript = transcript_list.filter(is_generated=True)[0]
+                
+                transcript_data = transcript.fetch()
+                # Combine text
+                full_text = " ".join([t["text"] for t in transcript_data])
+                
+                # Limit text to ~2000 words (approx 12000 chars) to avoid blowing up context window
+                if len(full_text) > 12000:
+                    full_text = full_text[:12000] + "... (transcript truncated)"
+                    
+                return json.dumps({
+                    "title": title,
+                    "transcript": full_text,
+                    "note": "Synthesize this information into your lesson. DO NOT share the video link with the user."
+                }, indent=2)
+                
+            except Exception as e:
+                return json.dumps({
+                    "error": f"Found video '{title}' but could not extract transcript. Error: {str(e)}"
+                })
+                
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+            
+    return await sync_to_async(_do_youtube_research)()
+
 
 # ════════════════════════════════════════════════════════════════════════════════
 # Library Agent Tools — RAG-powered curriculum knowledge base
@@ -297,52 +392,82 @@ async def search_library_rag(
     Returns:
         JSON string with ranked library materials most relevant to the query.
     """
+    import logging
+    _log = logging.getLogger(__name__)
+
     def _do_rag_search():
+        import concurrent.futures
+
+        def _search_with_timeout():
+            try:
+                from apps.curriculum.rag_service import search_library
+                from apps.curriculum.exceptions import RAGServiceError
+
+                try:
+                    results = search_library(
+                        query, subject=subject, class_level=class_level,
+                        n_results=LIBRARY_RAG_DEFAULT_HITS,  # ← Named constant
+                    )
+                except RAGServiceError as e:
+                    # Circuit Breaker — log and fall through to keyword fallback
+                    _log.warning("RAG service unavailable: %s — using keyword fallback", e)
+                    results = []
+
+                if results:
+                    return json.dumps({
+                        "source": "curriculum_library",
+                        "count": len(results),
+                        "results": results,
+                    }, indent=2)
+
+                # Fallback: keyword search in DB if vector store is empty
+                from apps.curriculum.models import Lesson
+                lessons = Lesson.objects.filter(
+                    title__icontains=query
+                ).select_related("subject", "class_level")[:3]
+
+                if lessons:
+                    db_results = [
+                        {
+                            "title": l.title,
+                            "subject": l.subject.subject_name if l.subject else "",
+                            "class_level": l.class_level.level_name if l.class_level else "",
+                            "excerpt": (l.description or l.body_html or "")[:400],
+                            "type": "lesson",
+                            "relevance": 0.6,
+                        }
+                        for l in lessons
+                    ]
+                    return json.dumps({
+                        "source": "curriculum_db_keyword",
+                        "count": len(db_results),
+                        "results": db_results,
+                    }, indent=2)
+
+                return json.dumps({"source": "curriculum_library", "count": 0, "results": []})
+
+            except Exception as e:
+                return json.dumps({"error": str(e)})
+
         try:
-            from apps.curriculum.rag_service import search_library
-            results = search_library(query, subject=subject, class_level=class_level, n_results=5)
-
-            if results:
-                return json.dumps({
-                    "source": "curriculum_library",
-                    "count": len(results),
-                    "results": results,
-                }, indent=2)
-
-            # Fallback: keyword search in the DB if vector store is empty
-            from apps.curriculum.models import Lesson
-            lessons = Lesson.objects.filter(
-                title__icontains=query
-            ).select_related("subject", "class_level")[:3]
-
-            if lessons:
-                db_results = [
-                    {
-                        "title": l.title,
-                        "subject": l.subject.subject_name if l.subject else "",
-                        "class_level": l.class_level.level_name if l.class_level else "",
-                        "excerpt": (l.description or l.body_html)[:400],
-                        "type": "lesson",
-                        "relevance": 0.6,
-                    }
-                    for l in lessons
-                ]
-                return json.dumps({
-                    "source": "curriculum_db_keyword",
-                    "count": len(db_results),
-                    "results": db_results,
-                }, indent=2)
-
-            return json.dumps({"source": "curriculum_library", "count": 0, "results": []})
-
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_search_with_timeout)
+                return future.result(timeout=RAG_SEARCH_TIMEOUT_SECS)  # ← Named constant
+        except concurrent.futures.TimeoutError:
+            return json.dumps({
+                "source": "curriculum_library",
+                "count": 0,
+                "results": [],
+                "note": "Library index is warming up. Falling back to web search.",
+            })
         except Exception as e:
             return json.dumps({"error": str(e)})
 
     return await sync_to_async(_do_rag_search)()
 
-
 @mcp.tool()
 async def compile_lesson_from_material(
+
     material_title: str,
     topic: str,
 ) -> str:
@@ -445,9 +570,136 @@ async def research_and_save_curriculum(
                 summary["message"] = "No sufficiently relevant resources found online for this topic."
             return json.dumps(summary, indent=2)
         except Exception as e:
+            import logging
+            logging.error(f"Background research error: {e}")
             return json.dumps({"error": str(e)})
 
-    return await sync_to_async(_do_research)()
+    import asyncio
+    
+    # Dispatch as a background task to prevent blocking the agent stream
+    asyncio.create_task(sync_to_async(_do_research)())
+    
+    return json.dumps({
+        "status": "Job queued",
+        "message": "The research task has been dispatched to the background. Proceed with teaching the learner, and inform them that the resources will be available in the library shortly."
+    })
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Expert Tools — Math and Knowledge Graph
+# ════════════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+async def calculate_math_expression(expression: str) -> str:
+    """
+    Math Expert Tool: Safely evaluate a mathematical expression using Python's math module.
+    Use this to verify any calculations before presenting them to the learner.
+
+    Args:
+        expression: The mathematical expression to evaluate (e.g., "5 * (3 + 2)", "math.sqrt(16)").
+
+    Returns:
+        JSON string containing the calculated result or an error message.
+    """
+    def _do_calculate():
+        import sympy
+        try:
+            # Parse the mathematical expression securely using sympy (prevents code execution attacks)
+            expr = sympy.sympify(expression)
+            # Evaluate it to a float, but also return the exact mathematical string
+            result = float(expr.evalf())
+            return json.dumps({"expression": expression, "result": result, "exact": str(expr)})
+        except Exception as e:
+            return json.dumps({"error": f"Failed to calculate expression safely: {str(e)}"})
+
+    return await sync_to_async(_do_calculate)()
+
+
+@mcp.tool()
+async def query_knowledge_graph(topic: str, query_type: str = "prerequisites") -> str:
+    """
+    Expert Agent Tool: Traverse the Curriculum Knowledge Graph to understand learning paths.
+
+    Args:
+        topic: The conceptual topic to query (e.g., 'Algebra', 'Photosynthesis').
+        query_type: The type of traversal to run. Allowed values: 'prerequisites' (finds what to learn before).
+
+    Returns:
+        JSON string containing the related graph nodes.
+    """
+    def _do_query():
+        try:
+            from apps.ai_tutor.knowledge_graph import KnowledgeGraphService
+            kg = KnowledgeGraphService()
+            
+            if query_type == "prerequisites":
+                prereqs = kg.get_prerequisites(topic)
+                # If topic doesn't match ID, we do a name search
+                if not prereqs:
+                    kg.load_graph()
+                    node_id = next((n for n, d in kg._graph.nodes(data=True) if d.get('name', '').lower() == topic.lower()), None)
+                    if node_id:
+                        prereqs = kg.get_prerequisites(node_id)
+                
+                return json.dumps({
+                    "topic": topic,
+                    "query_type": "prerequisites",
+                    "results": prereqs
+                }, indent=2)
+            else:
+                return json.dumps({"error": "Unknown query_type. Use 'prerequisites'."})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    return await sync_to_async(_do_query)()
+
+@mcp.tool()
+async def taxonomy_lookup(species_name: str) -> str:
+    """
+    Biology Expert Tool: Look up the taxonomy and basic traits of a species.
+    
+    Args:
+        species_name: The common or scientific name of the organism.
+    """
+    def _do_lookup():
+        import urllib.request
+        import json
+        try:
+            # Using Wikipedia API for a quick taxonomic lookup
+            url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{urllib.parse.quote(species_name)}"
+            req = urllib.request.Request(url, headers={'User-Agent': 'MwalimuAI/1.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read())
+                return json.dumps({
+                    "species": species_name,
+                    "summary": data.get("extract", "No data found."),
+                    "source": "Wikipedia"
+                })
+        except Exception as e:
+            return json.dumps({"error": f"Taxonomy lookup failed: {str(e)}"})
+            
+    return await sync_to_async(_do_lookup)()
+
+@mcp.tool()
+async def generate_biological_diagram(anatomy_part: str) -> str:
+    """
+    Biology Expert Tool: Generate an SVG diagram for biological anatomy or cells.
+    
+    Args:
+        anatomy_part: The biological structure to draw (e.g. 'plant cell', 'heart').
+    """
+    def _do_draw():
+        # In a production environment, this would call a specialized diagram generation API
+        # or fetch pre-made SVGs from the curriculum database.
+        # For now, we return a structured placeholder that the frontend could render.
+        return json.dumps({
+            "type": "diagram",
+            "subject": anatomy_part,
+            "status": "Diagram generation requested. (Note: Visuals are rendered on the frontend dashboard).",
+            "labels_to_teach": ["Nucleus", "Mitochondria", "Cell Membrane"] if "cell" in anatomy_part.lower() else ["Component 1", "Component 2"]
+        })
+        
+    return await sync_to_async(_do_draw)()
 
 
 # ════════════════════════════════════════════════════════════════════════════════

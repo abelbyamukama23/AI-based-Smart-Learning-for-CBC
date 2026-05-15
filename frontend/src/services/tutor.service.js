@@ -1,47 +1,40 @@
-/**
- * tutor.service.js — Mwalimu AI Tutor API Service (Threaded)
- *
- * Endpoints:
- *   POST /api/v1/tutor/ask/              → SSE stream (progress + final answer)
- *   GET  /api/v1/tutor/threads/          → list of ChatThread summaries
- *   GET  /api/v1/tutor/threads/{id}/     → Full ChatThread with all interactions
- *
- * Token handling:
- *   Non-streaming endpoints use api.js (axios) which auto-refreshes on 401.
- *   The SSE endpoint uses raw fetch (axios can't stream) but calls getValidToken()
- *   first to proactively refresh an expired or near-expired access token.
- */
-
 import api from "../lib/api";
+import useAuthStore from "../store/authStore";
+import { decodeJWT } from "../lib/utils";
 
 const BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api/v1";
 
 // ── Token refresh helper for raw fetch (SSE) calls ────────────────────────────
 /**
- * Returns a valid access token, silently refreshing if expired or within
- * 60 seconds of expiry. Redirects to /login if refresh fails.
+ * Returns a valid access token via the Zustand store (single source of truth).
+ * Silently refreshes when the token is expired or within 60 s of expiry.
+ * Redirects to /login if refresh fails.
+ *
+ * Previously read directly from localStorage — now reads/writes through the
+ * store so the service and the rest of the app always see the same token state.
  */
 async function getValidToken() {
-  const access  = localStorage.getItem("access_token");
-  const refresh = localStorage.getItem("refresh_token");
+  const { accessToken, refreshToken, setTokens, clearAuth } =
+    useAuthStore.getState();
 
-  if (!access) return null;
+  if (!accessToken) return null;
 
-  // Decode JWT payload (pure base64 — no library needed)
+  // Decode to check expiry — reuse the shared utility, no inline atob()
   try {
-    const payload   = JSON.parse(atob(access.split(".")[1]));
-    const expiresAt = payload.exp * 1000; // convert to ms
-    const BUFFER    = 60 * 1000;          // refresh 60s before expiry
+    const payload   = decodeJWT(accessToken);
+    const expiresAt = payload?.exp * 1000; // ms
+    const BUFFER    = 60 * 1000;           // refresh 60 s before expiry
 
     if (Date.now() < expiresAt - BUFFER) {
-      return access; // still valid
+      return accessToken; // still valid
     }
   } catch {
     // malformed token — fall through to refresh
   }
 
-  if (!refresh) {
+  if (!refreshToken) {
+    clearAuth();
     window.location.href = "/login";
     return null;
   }
@@ -50,22 +43,23 @@ async function getValidToken() {
     const res = await fetch(`${BASE_URL}/auth/token/refresh/`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ refresh }),
+      body:    JSON.stringify({ refresh: refreshToken }),
     });
 
     if (!res.ok) throw new Error("Refresh failed");
 
     const data = await res.json();
-    localStorage.setItem("access_token", data.access);
-    if (data.refresh) localStorage.setItem("refresh_token", data.refresh);
+    // Update the store — this also persists to localStorage via the store action
+    setTokens({ access: data.access, refresh: data.refresh ?? refreshToken });
     return data.access;
   } catch {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
+    clearAuth();
     window.location.href = "/login";
     return null;
   }
 }
+
+
 
 // ── Streaming endpoint ─────────────────────────────────────────────────────────
 /**
@@ -84,7 +78,9 @@ export async function askTutor(
   threadId        = null,
   contextLessonId = null,
   onMessage       = null,
-  imageFile       = null
+  imageFile       = null,
+  mode            = "default",
+  signal          = null    // AbortSignal from AbortController
 ) {
   // Proactively refresh token before opening the SSE stream
   const token = await getValidToken();
@@ -97,11 +93,12 @@ export async function askTutor(
     form.append("query", query);
     if (threadId)        form.append("thread_id",         threadId);
     if (contextLessonId) form.append("context_lesson_id", contextLessonId);
+    form.append("mode", mode);
     form.append("image", imageFile);
     body = form;
     // Do NOT set Content-Type — browser adds multipart boundary automatically
   } else {
-    const payload = { query };
+    const payload = { query, mode };
     if (threadId)        payload.thread_id         = threadId;
     if (contextLessonId) payload.context_lesson_id = contextLessonId;
     body         = JSON.stringify(payload);
@@ -115,6 +112,7 @@ export async function askTutor(
       ...extraHeaders,
     },
     body,
+    ...(signal ? { signal } : {}),   // wire in the AbortController signal
   });
 
   if (response.status === 401) {
@@ -175,10 +173,12 @@ export async function askTutor(
 
 /**
  * List all chat threads for the current learner (sidebar).
+ * @param {string} searchQuery - Optional search term to filter threads.
  * @returns {Promise<ChatThreadSummary[]>}
  */
-export async function getChatThreads() {
-  const { data } = await api.get("/tutor/threads/");
+export async function getChatThreads(searchQuery = "") {
+  const url = searchQuery ? `/tutor/threads/?q=${encodeURIComponent(searchQuery)}` : "/tutor/threads/";
+  const { data } = await api.get(url);
   return Array.isArray(data) ? data : (data.results ?? []);
 }
 

@@ -1,566 +1,201 @@
 """
-apps/ai_tutor/agent.py — TutorAgent: AI Agent Loop with MCP + LLM Race Pattern
-=================================================================================
-Architecture:
-  1. Start the MCP server (mcp_server/server.py) as a stdio subprocess.
-  2. Fetch learner context via MCP resources.
-  3. Fire the same prompt + tool schema at THREE LLMs simultaneously:
-       - Google Gemini (gemini-1.5-flash)
-       - DeepSeek       (deepseek-chat via OpenAI-compatible API)
-       - Anthropic Claude (claude-3-5-haiku)
-       - Groq           (llama3 via OpenAI-compatible API)
-       - Ollama         (local open source models)
-  4. The first LLM to respond wins — others are cancelled (asyncio race).
-  5. If the winning LLM requested MCP tool calls, execute them and loop.
-  6. Return (final_text, is_out_of_scope, provider_used).
-
-Dependencies:
-    pip install mcp google-generativeai anthropic openai
+apps/ai_tutor/agent.py — TutorAgent (Refactored for Multi-Agent Architecture)
+==============================================================================
+Design Patterns applied:
+  • Strategy Pattern  — LLM providers are injected via LLMRace.
+  • Factory Pattern   — AgentRouter instantiates specialized agents based on mode.
+  • Base Class (DRY)  — BaseTutorAgent holds the common streaming/tool loops.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import os
 import sys
-from typing import Optional
-from decouple import config
+from typing import Optional, List, Dict
 
 logger = logging.getLogger(__name__)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
-# agent.py lives at:  CBC/apps/ai_tutor/agent.py
-# So we go up 3 levels:  ai_tutor/ → apps/ → CBC/ (project root)
-_THIS_FILE   = os.path.abspath(__file__)                          # .../CBC/apps/ai_tutor/agent.py
-_TUTOR_DIR   = os.path.dirname(_THIS_FILE)                        # .../CBC/apps/ai_tutor/
-_APPS_DIR    = os.path.dirname(_TUTOR_DIR)                        # .../CBC/apps/
-PROJECT_ROOT = os.path.dirname(_APPS_DIR)                         # .../CBC/
+_THIS_FILE   = os.path.abspath(__file__)
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(_THIS_FILE)))
 MCP_SERVER_SCRIPT = os.path.join(PROJECT_ROOT, "mcp_server", "server.py")
 
-# ── LLM Clients (lazy-initialised) ────────────────────────────────────────────
-def _get_gemini_client():
-    import google.generativeai as genai
-    api_key = config("GEMINI_API_KEY", default="")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not configured")
-    genai.configure(api_key=api_key)
-    return genai
-
-def _get_deepseek_client():
-    from openai import AsyncOpenAI
-    api_key = config("DEEPSEEK_API_KEY", default="")
-    if not api_key:
-        raise ValueError("DEEPSEEK_API_KEY not configured")
-    return AsyncOpenAI(
-        api_key=api_key,
-        base_url="https://api.deepseek.com/v1",
-    )
-
-def _get_groq_client():
-    from openai import AsyncOpenAI
-    api_key = config("GROQ_API_KEY", default="")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY not configured")
-    return AsyncOpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1",
-    )
-
-def _get_ollama_client():
-    from openai import AsyncOpenAI
-    base_url = config("OLLAMA_BASE_URL", default="http://localhost:11434/v1")
-    return AsyncOpenAI(
-        api_key="ollama", # Ollama doesn't require a real API key
-        base_url=base_url,
-    )
-
-def _get_claude_client():
-    import anthropic
-    api_key = config("ANTHROPIC_API_KEY", default="")
-    if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY not configured")
-    return anthropic.AsyncAnthropic(api_key=api_key)
-
-
 # ════════════════════════════════════════════════════════════════════════════════
-# MCP Client Helper
+# MCP Tool Execution Helpers
 # ════════════════════════════════════════════════════════════════════════════════
-async def _get_mcp_tools_and_session():
-    """
-    Start MCP server subprocess and return (session, tools_schema, read, write).
-    Caller is responsible for cleanup.
-    """
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
 
-    server_params = StdioServerParameters(
-        command=sys.executable,
-        args=[MCP_SERVER_SCRIPT],
-        env=None,
-    )
-    return server_params
-
-
-async def _call_mcp_tool(session, tool_name: str, tool_args: dict) -> str:
-    """Execute a single MCP tool call and return the result as a string."""
-    result = await session.call_tool(tool_name, tool_args)
-    # result.content is a list of TextContent / ImageContent
-    texts = [c.text for c in result.content if hasattr(c, "text")]
-    return "\n".join(texts)
-
-
-async def _fetch_learner_context(session, user_id: str) -> str:
-    """Fetch learner profile resource from MCP server."""
+async def _call_mcp_tool(tool_name: str, tool_args: dict) -> str:
+    from mcp_server.server import mcp
     try:
-        resource = await session.read_resource(f"learner://profile/{user_id}")
-        contents = [c.text for c in resource.contents if hasattr(c, "text")]
-        return "\n".join(contents)
+        result = await mcp.call_tool(tool_name, tool_args)
+        if isinstance(result, tuple) and result:
+            texts = [c.text for c in result[0] if hasattr(c, "text")]
+            return "\n".join(texts)
+        return str(result)
     except Exception as e:
-        logger.warning(f"Could not fetch learner profile: {e}")
+        logger.warning("Error calling MCP tool %s: %s", tool_name, e)
+        return json.dumps({"error": str(e)})
+
+
+async def _fetch_learner_context(user_id: str) -> str:
+    from asgiref.sync import sync_to_async
+    from mcp_server.server import _db_get_learner_profile
+    try:
+        return await sync_to_async(_db_get_learner_profile)(user_id)
+    except Exception as e:
+        logger.warning("Could not fetch learner profile: %s", e)
         return "{}"
 
 
-async def _fetch_lesson_context(session, lesson_id: str) -> str:
-    """Fetch lesson resource from MCP server."""
+async def _fetch_lesson_context(lesson_id: str) -> str:
+    from asgiref.sync import sync_to_async
+    from mcp_server.server import _db_get_lesson
     try:
-        resource = await session.read_resource(f"curriculum://lesson/{lesson_id}")
-        contents = [c.text for c in resource.contents if hasattr(c, "text")]
-        return "\n".join(contents)
+        return await sync_to_async(_db_get_lesson)(lesson_id)
     except Exception as e:
-        logger.warning(f"Could not fetch lesson: {e}")
+        logger.warning("Could not fetch lesson: %s", e)
         return "{}"
 
-
 # ════════════════════════════════════════════════════════════════════════════════
-# Schema Sanitizer — strips fields all LLM APIs reject from JSON-Schema dicts
-# ════════════════════════════════════════════════════════════════════════════════
-
-_SCHEMA_BLOCKED_FIELDS = {"default", "title", "$schema", "examples", "$defs"}
-
-
-def _sanitize_schema(schema) -> dict:
-    """
-    Recursively strip JSON-Schema fields that OpenAI-compatible APIs (DeepSeek,
-    Groq, Ollama) and Anthropic reject: 'default', 'title', '$schema', etc.
-    Safe to call with non-dict values (returns them unchanged).
-    """
-    if not isinstance(schema, dict):
-        return schema
-    cleaned = {k: v for k, v in schema.items() if k not in _SCHEMA_BLOCKED_FIELDS}
-    if "properties" in cleaned and isinstance(cleaned["properties"], dict):
-        cleaned["properties"] = {
-            k: _sanitize_schema(v) for k, v in cleaned["properties"].items()
-        }
-    if "items" in cleaned:
-        cleaned["items"] = _sanitize_schema(cleaned["items"])
-    return cleaned
-
-
-# ════════════════════════════════════════════════════════════════════════════════
-# LLM Wrappers — Each returns (text_response, tool_calls_list, provider_name)
+# System Prompts
 # ════════════════════════════════════════════════════════════════════════════════
 
-async def _call_gemini(messages: list, tools_schema: list, system_prompt: str):
-    """Call Google Gemini with tool support."""
-    import google.generativeai as genai
-    from google.generativeai.types import FunctionDeclaration, Tool
+_PLANNING_PROMPT = (
+    "\nBefore responding, you MUST silently plan your approach. Think step-by-step:\n"
+    "1. Identify the core concept the learner is asking about.\n"
+    "2. Determine what local Ugandan example or context will make this concept relatable.\n"
+    "3. Decide if a visual aid (SVG diagram or infographic) is needed to simulate or explain the concept.\n"
+    "4. Decide if you need to use the `research_youtube_video` tool to gather deeper knowledge from video transcripts.\n"
+)
 
-    genai_client = _get_gemini_client()
+_FORMATTING_PROMPT = (
+    "\nFormatting Rules:\n"
+    "- KEY CONCEPTS: Always wrap key concepts, vocabulary, or important terms in **double asterisks** so they render as highlighted bold text for the learner.\n"
+    "- MATH/EQUATIONS: Always format mathematical equations using LaTeX. For inline math, use `$inline$`. For block equations, you MUST put `$$` on their own separate lines before and after the equation. NEVER put other text on the same line as `$$` or the formatting will break.\n"
+    "- LATEX ESCAPING: You MUST escape percent signs as `\\%` inside math blocks, otherwise it acts as a comment and breaks the entire equation renderer.\n"
+    "- VISUALS & SIMULATIONS: If a diagram, simulation, or infographic is helpful, generate it using inline SVG code blocks. Format it exactly like this: ````svg <svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"...\">...</svg> ````. Make sure the SVG is responsive.\n"
+    "- SVG STYLING: Our UI is in Dark Mode. You MUST use white or very light colors (like #ffffff, #e5e7eb, #9ca3af) for all SVG strokes and text fills. NEVER use black or dark colors, as they will be completely invisible.\n"
+    "- INTERACTIVE SVGS: You MUST make your SVGs interactive. Add a `data-annotation=\"description here\"` attribute to key SVG elements (like <path>, <circle>, <g>, or <rect>). The frontend will use this to show a tooltip explaining that specific part when the learner hovers over it. Example: `<circle data-annotation=\"The Nucleus: Contains DNA\" ... />`.\n"
+    "- NO EXTERNAL LINKS: NEVER provide raw YouTube links or URLs to the user. Keep all learning within the chat. If you use a tool to research a video, read the transcript and synthesize the lesson yourself.\n"
+)
 
-    # Convert MCP tools schema to Gemini FunctionDeclarations
-    gemini_tools = []
-    for t in tools_schema:
-        params = t.get("inputSchema", {})
-        # Gemini needs properties as a dict
-        gemini_tools.append(
-            FunctionDeclaration(
-                name=t["name"],
-                description=t.get("description", ""),
-                parameters={
-                    "type": "object",
-                    "properties": params.get("properties", {}),
-                    "required": params.get("required", []),
-                },
-            )
-        )
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are Mwalimu, an expert AI Tutor for the Uganda Competence-Based Curriculum (CBC).\n"
+    "Pedagogical Rules & Approach:\n"
+    "1. Curriculum Focus: Only answer questions related to CBC curriculum subjects.\n"
+    "2. Contextual Learning: Teach using local Ugandan examples. Relate concepts to everyday life.\n"
+    "3. ASSIGNMENT ETHICS: If asked to solve homework, do NOT give the answer. Guide step-by-step.\n"
+    "4. INVISIBLE EXECUTION: Never say 'Let me search' or 'Based on my search'. Just TEACH.\n"
+    "5. Use tools like `search_library_rag` or `research_youtube_video` silently to build your knowledge before answering.\n"
+    + _PLANNING_PROMPT + _FORMATTING_PROMPT
+)
 
-    model = genai_client.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=system_prompt,
-        tools=[Tool(function_declarations=gemini_tools)] if gemini_tools else [],
-    )
+_MATH_EXPERT_PROMPT = (
+    "You are Mwalimu's Math Expert Agent for the Uganda CBC.\n"
+    "Pedagogical Focus:\n"
+    "- You use Socratic questioning to guide learners through step-by-step mathematical problem solving.\n"
+    "- You NEVER give the final answer immediately.\n"
+    "- You verify math calculations using your 'calculate_math_expression' tool to avoid hallucinations.\n"
+    "- Use 'query_knowledge_graph' to understand prerequisites before teaching advanced topics.\n"
+    "- INVISIBLE EXECUTION: Never state 'Let me calculate' or 'Let me search'. Just respond.\n"
+    + _PLANNING_PROMPT + _FORMATTING_PROMPT
+)
 
-    # Convert messages to Gemini format
-    gemini_history = []
-    last_user_msg = ""
-    for m in messages:
-        if m["role"] == "user":
-            last_user_msg = m["content"]
-        elif m["role"] == "assistant" and m.get("content"):
-            gemini_history.append({"role": "model", "parts": [m["content"]]})
-        elif m["role"] == "user" and gemini_history:
-            gemini_history.append({"role": "user", "parts": [m["content"]]})
+_BIOLOGY_EXPERT_PROMPT = (
+    "You are Mwalimu's Biology Expert Agent for the Uganda CBC.\n"
+    "Pedagogical Focus:\n"
+    "- You focus on observational analysis, cellular biology, anatomy, and ecology.\n"
+    "- You relate biological concepts to the human body and local Ugandan flora/fauna.\n"
+    "- Use your specialized tools like 'generate_biological_diagram' or 'taxonomy_lookup' to enhance learning.\n"
+    "- Extremely Important: You must use ````svg ```` blocks to visually illustrate biology concepts whenever possible.\n"
+    "- Use 'query_knowledge_graph' to understand prerequisites before teaching advanced topics.\n"
+    "- INVISIBLE EXECUTION: Never state 'Let me generate' or 'Let me search'. Just respond naturally.\n"
+    + _PLANNING_PROMPT + _FORMATTING_PROMPT
+)
 
-    chat = model.start_chat(history=gemini_history)
-    response = await asyncio.to_thread(chat.send_message, last_user_msg)
+_PROFESSOR_EXPERT_PROMPT = (
+    "You are Mwalimu's Professor Agent for the Uganda CBC.\n"
+    "Pedagogical Focus:\n"
+    "- You are the highest level of academic authority. Your goal is to synthesize knowledge across multiple subjects.\n"
+    "- You challenge learners with advanced critical thinking questions, real-world application, and academic rigor.\n"
+    "- You have access to ALL specialized tools across all subjects.\n"
+    "- Use 'query_knowledge_graph' extensively to build cross-disciplinary learning paths.\n"
+    "- INVISIBLE EXECUTION: Never state 'Let me search' or 'I will use a tool'. Just teach.\n"
+    + _PLANNING_PROMPT + _FORMATTING_PROMPT
+)
 
-    tool_calls = []
-    if response.candidates[0].content.parts:
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "function_call") and part.function_call:
-                fc = part.function_call
-                tool_calls.append({
-                    "name": fc.name,
-                    "args": dict(fc.args),
-                })
+_INTERNAL_PREFIXES = (
+    "let me ", "let me also", "let me now", "alright!", "alright,",
+    "based on my search", "based on the search", "based on the results",
+    "according to the system", "the platform shows", "the system shows",
+    "i found that", "i'll now", "i will now", "now let me",
+    "let me look", "let me check", "let me find",
+    "let me search", "let me retrieve", "let me fetch",
+)
 
-    text = response.text if not tool_calls else ""
-    return text, tool_calls, "gemini-1.5-flash"
-
-
-async def _call_deepseek(messages: list, tools_schema: list, system_prompt: str,
-                         image_b64: str = None, image_mime: str = None):
-    """Call DeepSeek (OpenAI-compatible) with tool and vision support."""
-    client = _get_deepseek_client()
-
-    openai_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
-            },
-        }
-        for t in tools_schema
+def _clean_response(text: str) -> str:
+    if not text:
+        return text
+    kept = [
+        line for line in text.splitlines()
+        if not any(line.strip().lower().startswith(p) for p in _INTERNAL_PREFIXES)
     ]
-
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
-
-    # If an image is provided, attach it to the last user message as vision content
-    if image_b64 and image_mime:
-        for i in range(len(full_messages) - 1, -1, -1):
-            if full_messages[i]["role"] == "user" and isinstance(full_messages[i]["content"], str):
-                original_text = full_messages[i]["content"]
-                full_messages[i] = {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{image_mime};base64,{image_b64}"},
-                        },
-                        {"type": "text", "text": original_text},
-                    ],
-                }
-                break
-
-    kwargs = {"model": "deepseek-chat", "messages": full_messages, "max_tokens": 2048}
-    if openai_tools:
-        kwargs["tools"] = openai_tools
-        kwargs["tool_choice"] = "auto"
-
-    response = await client.chat.completions.create(**kwargs)
-    msg = response.choices[0].message
-
-    tool_calls = []
-    if msg.tool_calls:
-        for tc in msg.tool_calls:
-            tool_calls.append({
-                "id": tc.id,
-                "name": tc.function.name,
-                "args": json.loads(tc.function.arguments),
-            })
-
-    text = msg.content or ""
-    return text, tool_calls, "deepseek-chat"
-
-
-async def _call_groq(messages: list, tools_schema: list, system_prompt: str):
-    """Call Groq (OpenAI-compatible) with tool support."""
-    client = _get_groq_client()
-
-    # Build OpenAI-style tool schema
-    openai_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
-            },
-        }
-        for t in tools_schema
-    ]
-
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
-
-    # Using Llama 3.3 70b versatile for smarter context reasoning and proper tool calling
-    kwargs = {"model": "llama-3.3-70b-versatile", "messages": full_messages, "max_tokens": 1024}
-    if openai_tools:
-        kwargs["tools"] = openai_tools
-        kwargs["tool_choice"] = "auto"
-
-    response = await client.chat.completions.create(**kwargs)
-    msg = response.choices[0].message
-
-    tool_calls = []
-    if msg.tool_calls:
-        for tc in msg.tool_calls:
-            tool_calls.append({
-                "id": tc.id,
-                "name": tc.function.name,
-                "args": json.loads(tc.function.arguments),
-            })
-
-    text = msg.content or ""
-    return text, tool_calls, "groq-llama3"
-
-
-async def _call_ollama(messages: list, tools_schema: list, system_prompt: str):
-    """Call Local Ollama (OpenAI-compatible) with tool support."""
-    client = _get_ollama_client()
-
-    openai_tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": t["name"],
-                "description": t.get("description", ""),
-                "parameters": t.get("inputSchema", {"type": "object", "properties": {}}),
-            },
-        }
-        for t in tools_schema
-    ]
-
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
-
-    model_name = config("OLLAMA_MODEL", default="llama3.1")
-    kwargs = {"model": model_name, "messages": full_messages}
-    if openai_tools:
-        kwargs["tools"] = openai_tools
-
-    response = await client.chat.completions.create(**kwargs)
-    msg = response.choices[0].message
-
-    tool_calls = []
-    if msg.tool_calls:
-        for tc in msg.tool_calls:
-            tool_calls.append({
-                "id": tc.id,
-                "name": tc.function.name,
-                "args": json.loads(tc.function.arguments),
-            })
-
-    text = msg.content or ""
-    return text, tool_calls, f"ollama-{model_name}"
-
-
-async def _call_claude(messages: list, tools_schema: list, system_prompt: str):
-    """Call Anthropic Claude with tool support."""
-    client = _get_claude_client()
-
-    # Build Anthropic tool schema
-    anthropic_tools = [
-        {
-            "name": t["name"],
-            "description": t.get("description", ""),
-            "input_schema": t.get("inputSchema", {"type": "object", "properties": {}}),
-        }
-        for t in tools_schema
-    ]
-
-    # Convert messages to Anthropic format (user/assistant alternating)
-    anthropic_messages = []
-    for m in messages:
-        role = m["role"] if m["role"] in ("user", "assistant") else "user"
-        content = m.get("content", "")
-        if content:
-            anthropic_messages.append({"role": role, "content": content})
-
-    kwargs = {
-        "model": "claude-3-5-haiku-20241022",
-        "max_tokens": 1024,
-        "system": system_prompt,
-        "messages": anthropic_messages,
-    }
-    if anthropic_tools:
-        kwargs["tools"] = anthropic_tools
-
-    response = await client.messages.create(**kwargs)
-
-    tool_calls = []
-    text_parts = []
-    for block in response.content:
-        if block.type == "text":
-            text_parts.append(block.text)
-        elif block.type == "tool_use":
-            tool_calls.append({
-                "id": block.id,
-                "name": block.name,
-                "args": block.input,
-            })
-
-    text = "\n".join(text_parts)
-    return text, tool_calls, "claude-3-5-haiku"
-# ════════════════════════════════════════════════════════════════════════════════
-# Race Runner
-# ════════════════════════════════════════════════════════════════════════════════
-
-async def _race_llms(messages: list, tools_schema: list, system_prompt: str,
-                     image_b64: str = None, image_mime: str = None):
-    """
-    Try DeepSeek first (with optional vision). If it fails, race remaining LLMs.
-    Returns: (text, tool_calls, provider_name)
-    """
-    if config("DEEPSEEK_API_KEY", default=""):
-        try:
-            return await _call_deepseek(messages, tools_schema, system_prompt, image_b64, image_mime)
-        except Exception as e:
-            logger.warning(f"DeepSeek failed, falling back to race: {e}")
-
-    # Race the remaining fallback LLMs (text-only fallbacks)
-    providers = {}
-    if config("GEMINI_API_KEY", default=""):
-        providers["gemini"] = _call_gemini(messages, tools_schema, system_prompt)
-    if config("ANTHROPIC_API_KEY", default=""):
-        providers["claude"] = _call_claude(messages, tools_schema, system_prompt)
-    if config("GROQ_API_KEY", default=""):
-        providers["groq"] = _call_groq(messages, tools_schema, system_prompt)
-    if config("USE_OLLAMA", default="false").lower() == "true":
-        providers["ollama"] = _call_ollama(messages, tools_schema, system_prompt)
-
-    if not providers:
-        logger.warning("No LLM API keys configured. Returning mock response.")
-        return (
-            "[Mock] No LLM API keys are set. Please configure GROQ_API_KEY, "
-            "GEMINI_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY in your .env file.",
-            [],
-            "mock",
-        )
-
-    tasks = [asyncio.create_task(coro, name=name) for name, coro in providers.items()]
-    errors = []
-    for coro in asyncio.as_completed(tasks):
-        try:
-            result = await coro
-            for t in tasks:
-                if not t.done():
-                    t.cancel()
-            logger.info(f"LLM race won by: {result[2]}")
-            return result
-        except Exception as e:
-            logger.error(f"LLM task failed: {e}")
-            errors.append(str(e))
-
-    return (f"All LLM providers failed: { ' | '.join(errors) }", [], "error")
-
-
-# ════════════════════════════════════════════════════════════════════════════════
-# Main TutorAgent Class
-# ════════════════════════════════════════════════════════════════════════════════
-
-class TutorAgent:
-    """
-    Orchestrates the full AI Agent loop:
-      MCP server → Learner context → LLM race → Tool execution → Final response
-    """
-
-    MAX_TOOL_ROUNDS = 5  # Safety limit on agentic loop iterations
-
-    # Phrases that indicate the model is narrating its internal process — strip these lines
-    _INTERNAL_PREFIXES = (
-        "let me ", "let me also", "let me now", "alright!", "alright,",
-        "based on my search", "based on the search", "based on the results",
-        "according to the system", "the platform shows", "the system shows",
-        "i found that", "i found that", "i'll now", "i will now",
-        "now let me", "let me look", "let me check", "let me find",
-        "let me search", "let me retrieve", "let me fetch",
-    )
-
-    @staticmethod
-    def _clean_response(text: str) -> str:
-        """
-        Strip lines where Mwalimu narrates its internal tool-calling process.
-        These lines should only appear as SSE status events, never in the final answer.
-        """
-        if not text:
-            return text
-        lines = text.splitlines()
-        kept = []
-        for line in lines:
-            low = line.strip().lower()
-            # Drop blank lines that were separating stripped content
-            if any(low.startswith(p) for p in TutorAgent._INTERNAL_PREFIXES):
-                continue
-            kept.append(line)
-        # Collapse more than 2 consecutive blank lines into 1
-        result = []
-        blanks = 0
-        for line in kept:
-            if line.strip() == "":
-                blanks += 1
-                if blanks <= 1:
-                    result.append(line)
-            else:
-                blanks = 0
+    result, blanks = [], 0
+    for line in kept:
+        if line.strip() == "":
+            blanks += 1
+            if blanks <= 1:
                 result.append(line)
-        return "\n".join(result).strip()
+        else:
+            blanks = 0
+            result.append(line)
+    return "\n".join(result).strip()
 
+# ════════════════════════════════════════════════════════════════════════════════
+# Base Agent Class
+# ════════════════════════════════════════════════════════════════════════════════
+
+class BaseTutorAgent:
+    MAX_TOOL_ROUNDS = 5
 
     def __init__(self):
-        self.system_prompt = (
-            "You are Mwalimu, an expert AI Tutor for the Uganda "
-            "Competence-Based Curriculum (CBC). You are not just an answering machine; "
-            "you are a highly intelligent and engaging teacher. Treat every question from a learner as a mini-lesson.\n\n"
-
-            "Pedagogical Rules & Approach:\n"
-            "1. Curriculum Focus: Only answer questions related to CBC curriculum subjects "
-            "(Mathematics, Science, English, SST, ICT, etc.). If a question is out of scope (politics, violence, adult content), "
-            "politely decline and redirect to curriculum topics.\n"
-
-            "2. Contextual Learning: Teach using analogies, scenarios, and local Ugandan examples. Draw information from "
-            "the learner's natural environment and surroundings so they can easily relate to the concept and see how it is applied in daily life.\n"
-
-            "3. Natural Thinking & Problem Solving: Guide the learner to think critically. Instead of just delivering raw facts, "
-            "force the learner into natural thinking by relating the problem to real-world situations they can solve.\n"
-
-            "4. ASSIGNMENT ETHICS — This is critical:\n"
-            "   a) If a learner asks you to SOLVE, DO, or COMPLETE a specific exercise, exam question, or homework "
-            "      assignment WITHOUT showing any attempt of their own, DO NOT give the answer. "
-            "      Instead, encourage them warmly: say you are happy to guide them, "
-            "      ask them to try first and share their attempt (as text or a photo of their work), "
-            "      and explain that you will review it together.\n"
-            "   b) If a learner shares their attempt — either as text in the chat OR as a photo/image of their handwritten work — "
-            "      analyze it carefully. Praise what is correct. Gently identify errors. "
-            "      Guide them step-by-step towards the correct answer WITHOUT just giving them the final answer outright. "
-            "      The goal is to BUILD understanding, not to replace it.\n"
-            "   c) If a learner asks a CONCEPTUAL question (e.g. 'What is photosynthesis?' or 'How does division work?'), "
-            "      answer it fully with local examples — this is not an assignment, it is learning.\n"
-
-            "5. Image Analysis: When a learner shares an image of their handwritten work, "
-            "carefully read and analyse what is written. Treat it the same as if they typed their attempt.\n"
-
-            "6. INVISIBLE EXECUTION — THIS IS THE MOST CRITICAL RULE:\n"
-            "   Your final written response is what a learner READS. It must sound like a human teacher speaking directly to them.\n"
-            "   You have tools and can search for information — but you must do this SILENTLY. \n"
-            "   Your final answer must NEVER contain ANY of the following:\n"
-            "   - Statements about what you are doing or searching: 'Let me search...', 'Let me check...', 'Let me look up...', 'Let me find...'\n"
-            "   - References to tools or searches: 'Based on my search', 'According to the system', 'The platform shows', 'I found that...'\n"
-            "   - Transitional thinking phrases: 'Alright!', 'Now let me...', 'Let me also...', 'Let me now...'\n"
-            "   - Any mention that you searched, retrieved data, or used any tool whatsoever.\n"
-            "   Think of it this way: a teacher walks into class already prepared. They do not say 'Let me now open my book to check...'\n"
-            "   They simply TEACH. That is exactly how your final response must read.\n"
-            "   STATUS MESSAGES (shown while the learner waits) may communicate your progress — but NEVER the final written answer.\n"
-            "\n"
-            "6b. TOOL PRIORITY ORDER:\n"
-            "   When a learner asks about a curriculum topic, always follow this order:\n"
-            "   1. FIRST: call search_library_rag — this searches the official Uganda CBC library.\n"
-            "   2. If the library has good results (relevance > 0.5), teach from those materials.\n"
-            "   3. ONLY if the library returns nothing relevant, fall back to web_search_curriculum.\n"
-            "   4. For deep dives into a specific book or file, use compile_lesson_from_material.\n"
-
-            "7. Tone: Be encouraging, warm, and patient. Tailor explanations to the learner's class level when known."
+        from .llm import (
+            ClaudeProvider, DeepSeekProvider, GeminiProvider,
+            GroqProvider, LLMRace, OllamaProvider,
         )
+        self._race = LLMRace([
+            DeepSeekProvider(),
+            GeminiProvider(),
+            ClaudeProvider(),
+            GroqProvider(),
+            OllamaProvider(),
+        ])
+
+    def get_system_prompt(self) -> str:
+        raise NotImplementedError("Subclasses must implement this.")
+
+    def get_allowed_tools(self, all_tools: List[Dict]) -> List[Dict]:
+        return all_tools  # Allow all by default
+
+    async def _classify_intent(self, query: str) -> str:
+        classifier_prompt = (
+            "You are an intent classifier for an educational AI Tutor.\n"
+            "Classify the user's latest message into one of three categories:\n"
+            "1. CHAT: Greetings, off-topic, or non-educational questions.\n"
+            "2. READ_MATERIAL: User asks to read a book, lesson, or curriculum material.\n"
+            "3. QUESTION: Educational or curriculum-based conceptual question.\n"
+            "Return ONLY the category name. No other text."
+        )
+        try:
+            text, _, _ = await self._race.run([{"role": "user", "content": query}], [], classifier_prompt)
+            clean = text.strip().upper()
+            if "CHAT" in clean: return "CHAT"
+            if "READ_MATERIAL" in clean: return "READ_MATERIAL"
+            return "QUESTION"
+        except Exception:
+            return "QUESTION"
 
     async def run_stream(
         self,
@@ -568,203 +203,307 @@ class TutorAgent:
         query: str,
         context_lesson_id: Optional[str] = None,
         history: list = None,
-        image_b64: str = None,
-        image_mime: str = None,
+        image_b64: Optional[str] = None,
+        image_mime: Optional[str] = None,
     ):
-        """Run the full agent loop yielding JSON strings for each step."""
-        from mcp import ClientSession, StdioServerParameters
-        from mcp.client.stdio import stdio_client
-
-        server_params = StdioServerParameters(
-            command=sys.executable,
-            args=[MCP_SERVER_SCRIPT],
-            env={**os.environ},
-        )
-
         tool_calls_log = []
 
-        async with stdio_client(server_params) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
+        yield json.dumps({"type": "status", "message": "Classifying your request..."})
+        intent = await self._classify_intent(query)
+        logger.info("Intent classified: %s", intent)
 
-                yield json.dumps({"type": "status", "message": "Initializing AI Tutor session..."})
-                
-                # ── 1. List available tools from MCP server ───────────────────
-                tools_list = await session.list_tools()
-                tools_schema = [
-                    {
-                        "name": t.name,
-                        "description": t.description or "",
-                        # Sanitize once here — all LLM providers get clean schemas
-                        "inputSchema": _sanitize_schema(
-                            t.inputSchema if hasattr(t, "inputSchema") else {}
-                        ),
-                    }
-                    for t in tools_list.tools
-                ]
-
-                yield json.dumps({"type": "status", "message": "Fetching learner context..."})
-                # ── 2. Build initial context ──────────────────────────────────
-                learner_ctx = await _fetch_learner_context(session, user_id)
-                learner_data = {}
-                try:
-                    learner_data = json.loads(learner_ctx)
-                except json.JSONDecodeError:
-                    pass
-
-                system_prompt = self.system_prompt
-                if learner_data:
-                    system_prompt += (
-                        f"\n\nLearner Profile:\n"
-                        f"- Name: {learner_data.get('username', 'Unknown')}\n"
-                        f"- Class Level: {learner_data.get('class_level', 'Unknown')}\n"
-                        f"- School: {learner_data.get('school', 'Unknown')}\n"
-                    )
-
-                # ── 3. Pre-fetch lesson context if provided ───────────────────
-                lesson_ctx = ""
-                if context_lesson_id:
-                    lesson_ctx = await _fetch_lesson_context(session, context_lesson_id)
-                    try:
-                        lesson_data = json.loads(lesson_ctx)
-                        system_prompt += (
-                            f"\n\nThe learner is currently viewing:\n"
-                            f"Lesson: '{lesson_data.get('title', '')}' "
-                            f"({lesson_data.get('subject', '')} — "
-                            f"{lesson_data.get('class_level', '')})\n"
-                            f"Competencies: "
-                            f"{', '.join(c['name'] for c in lesson_data.get('competencies', []))}"
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                # ── 4. Agentic tool-calling loop ──────────────────────────────
-                messages = history or []
-                messages.append({"role": "user", "content": query})
-
-                for round_num in range(self.MAX_TOOL_ROUNDS):
-                    yield json.dumps({"type": "status", "message": "Analyzing query and formulating response..."})
-                    # Only send image on the first round; subsequent rounds are tool-result text-only
-                    round_image_b64   = image_b64   if round_num == 0 else None
-                    round_image_mime  = image_mime  if round_num == 0 else None
-                    text, tool_calls, provider = await _race_llms(
-                        messages, tools_schema, system_prompt,
-                        round_image_b64, round_image_mime
-                    )
-
-                    # No tool calls → we have a final answer
-                    if not tool_calls:
-                        clean = TutorAgent._clean_response(text)
-                        is_out_of_scope = "out of scope" in clean.lower()
-                        yield json.dumps({
-                            "type": "final",
-                            "content": clean,
-                            "is_out_of_scope": is_out_of_scope,
-                            "provider": provider,
-                            "tool_calls_log": tool_calls_log
-                        })
-                        return
-
-                    # Execute each tool call via MCP
-                    tool_results = []
-                    for tc in tool_calls:
-                        tool_name = tc["name"]
-                        tool_args = tc.get("args", {})
-                        logger.info(f"Agent calling MCP tool: {tool_name}({tool_args})")
-                        yield json.dumps({
-                            "type": "tool_call",
-                            "name": tool_name,
-                            "args": tool_args
-                        })
-
-                        try:
-                            result_text = await _call_mcp_tool(session, tool_name, tool_args)
-                        except Exception as e:
-                            result_text = json.dumps({"error": str(e)})
-
-                        tool_calls_log.append({
-                            "round": round_num + 1,
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result_preview": result_text[:200],
-                            "provider": provider,
-                        })
-                        tool_results.append({
-                            "tool_call_id": tc.get("id", tool_name),
-                            "tool_name": tool_name,
-                            "result": result_text,
-                        })
-
-                    # Append assistant + tool results to conversation
-                    messages.append({"role": "assistant", "content": text or "(called tools)"})
-                    for tr in tool_results:
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                f"[Tool Result: {tr['tool_name']}]\n{tr['result']}"
-                            ),
-                        })
-
-                # Safety fallback after MAX_TOOL_ROUNDS
-                yield json.dumps({"type": "status", "message": "Finalizing answer..."})
-                final_text, _, provider = await _race_llms(
-                    messages + [
-                        {"role": "user", "content": "Please provide your final answer now. Do NOT narrate your process — speak directly to the learner as their teacher."}
-                    ],
-                    [],
-                    system_prompt,
+        # Build prompt
+        yield json.dumps({"type": "status", "message": "Fetching learner context..."})
+        learner_ctx = await _fetch_learner_context(user_id)
+        system_prompt = self.get_system_prompt()
+        
+        try:
+            learner_data = json.loads(learner_ctx)
+            if learner_data:
+                learner_name = learner_data.get('first_name') or learner_data.get('username') or 'Learner'
+                system_prompt += (
+                    f"\n\nLearner Profile:\n"
+                    f"- Name: {learner_name}\n"
+                    f"- Class Level: {learner_data.get('class_level', 'Unknown')}\n"
+                    f"- School: {learner_data.get('school', 'Unknown')}\n"
                 )
-                clean_final = TutorAgent._clean_response(final_text)
-                is_out_of_scope = "out of scope" in clean_final.lower()
+
+                # ── Dynamic Pedagogy Injection ──────────────────────────────
+                methodology = learner_data.get('preferred_methodology', 'SOCRATIC')
+                language = learner_data.get('preferred_language', 'EN')
+                region = learner_data.get('familiar_region')
+
+                METHODOLOGY_DIRECTIVES = {
+                    'SOCRATIC': "Use the Socratic method: guide the learner with probing questions instead of giving direct answers. Help them discover the concept themselves.",
+                    'DIRECT': "Use direct instruction: give clear, concise, step-by-step explanations. Get to the point efficiently without excessive questioning.",
+                    'VISUAL': "Use Visual & Storytelling: frame every concept inside a relatable story or vivid analogy. Build mental imagery. Draw diagrams proactively.",
+                    'PROJECT': "Use a Project-Based approach: anchor every explanation in a real-world practical task or problem the learner could actually carry out.",
+                }
+                LANGUAGE_NAMES = {
+                    'EN': 'English', 'LG': 'Luganda', 'SW': 'Swahili', 'RN': 'Runyankole',
+                }
+
+                system_prompt += "\n\nADAPTIVE PEDAGOGY DIRECTIVES (HIGHEST PRIORITY):\n"
+                system_prompt += f"- METHODOLOGY: {METHODOLOGY_DIRECTIVES.get(methodology, METHODOLOGY_DIRECTIVES['SOCRATIC'])}\n"
+                if language != 'EN':
+                    lang_name = LANGUAGE_NAMES.get(language, language)
+                    system_prompt += f"- LANGUAGE: When the learner asks for a translation or seems confused, translate the key explanation into {lang_name}. Default output remains English.\n"
+                if region:
+                    system_prompt += f"- REGIONAL CONTEXT: The learner is from the {region} region of Uganda. ALWAYS use examples, names, places, economic activities, and cultural references specific to {region} as your FIRST CHOICE when explaining any concept before considering other contexts.\n"
+
+        except json.JSONDecodeError:
+            pass
+
+        if context_lesson_id:
+            lesson_ctx = await _fetch_lesson_context(context_lesson_id)
+            try:
+                lesson_data = json.loads(lesson_ctx)
+                system_prompt += (
+                    f"\n\nThe learner is currently viewing:\n"
+                    f"Lesson: '{lesson_data.get('title', '')}' "
+                    f"({lesson_data.get('subject', '')} — {lesson_data.get('class_level', '')})\n"
+                    f"Competencies: {', '.join(c['name'] for c in lesson_data.get('competencies', []))}"
+                )
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        messages = list(history or [])
+        messages.append({"role": "user", "content": query})
+
+        if intent == "CHAT":
+            yield json.dumps({"type": "status", "message": "Formulating response..."})
+            text_buffer = ""
+            provider = "deepseek"
+            
+            async for item in self._race.stream_run(
+                messages, [], system_prompt, image_b64=image_b64, image_mime=image_mime
+            ):
+                if item["type"] == "chunk":
+                    text_buffer += item["content"]
+                    yield json.dumps(item)
+            
+            clean = _clean_response(text_buffer)
+            yield json.dumps({
+                "type": "final",
+                "content": clean,
+                "is_out_of_scope": "out of scope" in clean.lower(),
+                "provider": provider,
+                "tool_calls_log": [],
+            })
+            return
+
+        from mcp_server.server import mcp
+        raw_tools = await mcp.list_tools()
+        tools_schema = self.get_allowed_tools([
+            {
+                "name": t.name,
+                "description": t.description or "",
+                "inputSchema": t.inputSchema if hasattr(t, "inputSchema") else {},
+            }
+            for t in raw_tools
+        ])
+
+        failed_tools = {}
+
+        for round_num in range(self.MAX_TOOL_ROUNDS):
+            yield json.dumps({"type": "status", "message": "Analyzing query and formulating response..."})
+            round_img   = image_b64  if round_num == 0 else None
+            round_mime  = image_mime if round_num == 0 else None
+
+            text_buffer = ""
+            tool_calls = []
+            provider = "deepseek"
+
+            async for item in self._race.stream_run(
+                messages, tools_schema, system_prompt,
+                image_b64=round_img, image_mime=round_mime,
+            ):
+                if item["type"] == "chunk":
+                    text_buffer += item["content"]
+                    yield json.dumps(item)
+                elif item["type"] == "tool_calls":
+                    tool_calls = item["tool_calls"]
+
+            if not tool_calls:
+                clean = _clean_response(text_buffer)
                 yield json.dumps({
                     "type": "final",
-                    "content": clean_final,
-                    "is_out_of_scope": is_out_of_scope,
+                    "content": clean,
+                    "is_out_of_scope": "out of scope" in clean.lower(),
                     "provider": provider,
-                    "tool_calls_log": tool_calls_log
+                    "tool_calls_log": tool_calls_log,
                 })
                 return
 
+            tool_results = []
+            for tc in tool_calls:
+                tool_name = tc["name"]
+                tool_args = tc.get("args", {})
+                yield json.dumps({"type": "tool_call", "name": tool_name, "args": tool_args})
+
+                result_text = await _call_mcp_tool(tool_name, tool_args)
+                
+                # Circuit Breaker Pattern
+                if "Error" in str(result_text):
+                    failed_tools[tool_name] = failed_tools.get(tool_name, 0) + 1
+                    if failed_tools[tool_name] >= 2:
+                        logger.warning("Circuit breaker tripped for tool: %s", tool_name)
+                        result_text += "\n[SYSTEM ALERT]: This tool has failed 2 times. DO NOT call it again. Proceed without it."
+                else:
+                    failed_tools[tool_name] = 0
+
+                tool_calls_log.append({
+                    "round": round_num + 1,
+                    "tool": tool_name,
+                    "args": tool_args,
+                    "result_preview": result_text[:200],
+                    "provider": provider,
+                })
+                tool_results.append({
+                    "tool_call_id": tc["id"],
+                    "role": "tool",
+                    "name": tool_name,
+                    "content": result_text,
+                })
+
+            formatted_tool_calls = []
+            for tc in tool_calls:
+                formatted_tool_calls.append({
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc.get("args", {}))
+                    }
+                })
+
+            messages.append({"role": "assistant", "content": text_buffer, "tool_calls": formatted_tool_calls})
+            messages.extend(tool_results)
+
+        yield json.dumps({"type": "status", "message": "Finalizing answer..."})
+        
+        final_text_buffer = ""
+        provider = "deepseek"
+        
+        async for item in self._race.stream_run(
+            messages + [{"role": "user", "content": "Please provide your final answer now. Speak directly to the learner."}],
+            [],
+            system_prompt
+        ):
+            if item["type"] == "chunk":
+                final_text_buffer += item["content"]
+                yield json.dumps(item)
+
+        clean_final = _clean_response(final_text_buffer)
+        yield json.dumps({
+            "type": "final",
+            "content": clean_final,
+            "is_out_of_scope": "out of scope" in clean_final.lower(),
+            "provider": provider,
+            "tool_calls_log": tool_calls_log,
+        })
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Specialized Agents
+# ════════════════════════════════════════════════════════════════════════════════
+
+class DefaultTutorAgent(BaseTutorAgent):
+    def get_system_prompt(self) -> str:
+        return _DEFAULT_SYSTEM_PROMPT
 
 
-# ── Convenience sync wrapper for Django views ─────────────────────────────────
+class MathExpertAgent(BaseTutorAgent):
+    def get_system_prompt(self) -> str:
+        return _MATH_EXPERT_PROMPT
+        
+    def get_allowed_tools(self, all_tools: List[Dict]) -> List[Dict]:
+        math_tools = ["search_library_rag", "query_knowledge_graph", "calculate_math_expression", "web_search_curriculum"]
+        return [t for t in all_tools if t["name"] in math_tools]
+
+
+class BiologyExpertAgent(BaseTutorAgent):
+    def get_system_prompt(self) -> str:
+        return _BIOLOGY_EXPERT_PROMPT
+        
+    def get_allowed_tools(self, all_tools: List[Dict]) -> List[Dict]:
+        bio_tools = ["search_library_rag", "query_knowledge_graph", "taxonomy_lookup", "generate_biological_diagram", "web_search_curriculum"]
+        return [t for t in all_tools if t["name"] in bio_tools]
+
+
+class ProfessorAgent(BaseTutorAgent):
+    def get_system_prompt(self) -> str:
+        return _PROFESSOR_EXPERT_PROMPT
+    
+    # The Professor gets ALL tools by default.
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Agent Router & Factory
+# ════════════════════════════════════════════════════════════════════════════════
+
+class AgentRouter:
+    _instances = {}
+
+    @classmethod
+    def get_agent(cls, mode: str, query: str = "") -> BaseTutorAgent:
+        agent_class = DefaultTutorAgent
+
+        if mode == "expert":
+            # Simple heuristic routing to the right expert
+            q = query.lower()
+            if any(w in q for w in ["math", "equation", "solve", "calculate", "algebra", "geometry", "+", "-", "*", "/"]):
+                agent_class = MathExpertAgent
+            elif any(w in q for w in ["biology", "cell", "plant", "animal", "anatomy", "photosynthesis", "organ", "reproduction"]):
+                agent_class = BiologyExpertAgent
+        elif mode == "professor":
+            agent_class = ProfessorAgent
+
+        if agent_class not in cls._instances:
+            cls._instances[agent_class] = agent_class()
+            
+        return cls._instances[agent_class]
+
+
+def get_agent(mode: str = "default", query: str = "") -> BaseTutorAgent:
+    return AgentRouter.get_agent(mode, query)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Sync wrapper for Django views
+# ════════════════════════════════════════════════════════════════════════════════
+
 def run_tutor_agent_stream(
     user_id: str,
     query: str,
     context_lesson_id: Optional[str] = None,
     history: list = None,
-    image_b64: str = None,
-    image_mime: str = None,
+    image_b64: Optional[str] = None,
+    image_mime: Optional[str] = None,
+    mode: str = "default",
 ):
-    """
-    Synchronous generator wrapper around TutorAgent.run_stream() for use in Django views.
-    Runs the event loop in a background thread and yields items from a thread-safe queue.
-    """
     import queue
     import threading
 
-    q = queue.Queue()
+    q: queue.Queue = queue.Queue()
+    agent = get_agent(mode, query)
 
     def run_in_thread():
         async def do_run():
-            agent = TutorAgent()
             try:
                 async for chunk in agent.run_stream(
                     user_id, query, context_lesson_id, history, image_b64, image_mime
                 ):
                     q.put(chunk)
-            except Exception as e:
-                logger.exception(f"TutorAgent stream failed: {e}")
-                q.put(json.dumps({
-                    "type": "error",
-                    "message": "I encountered an error while processing your request."
-                }))
+            except Exception as exc:
+                logger.exception("Agent stream failed: %s", exc)
+                q.put(json.dumps({"type": "error", "message": str(exc)}))
             finally:
-                q.put(None)  # EOF marker
+                q.put(None)
+
         try:
             asyncio.run(do_run())
-        except Exception as e:
-            q.put(json.dumps({"type": "error", "message": str(e)}))
+        except Exception as exc:
+            q.put(json.dumps({"type": "error", "message": str(exc)}))
             q.put(None)
 
     threading.Thread(target=run_in_thread, daemon=True).start()

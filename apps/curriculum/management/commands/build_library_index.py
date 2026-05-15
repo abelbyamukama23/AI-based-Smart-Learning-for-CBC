@@ -2,11 +2,13 @@
 Management command: build_library_index
 
 Embeds all CurriculumFile records and Lesson body text into ChromaDB for RAG retrieval.
+Now uses Google Gemini text-embedding-004 API instead of a local sentence-transformers
+model — no model download, no cold-start, no heavy RAM usage.
+
 Run after uploading new files:  python manage.py build_library_index
-Use --rebuild flag to re-embed everything from scratch.
+Use --rebuild flag to re-embed everything from scratch (required when switching
+from the old sentence-transformers 384-dim to Gemini 768-dim vectors).
 """
-import os
-import sys
 import logging
 from pathlib import Path
 from django.core.management.base import BaseCommand
@@ -25,32 +27,48 @@ class Command(BaseCommand):
             action="store_true",
             help="Delete and rebuild the entire index from scratch.",
         )
-        parser.add_argument(
-            "--only-unindexed",
-            action="store_true",
-            default=True,
-            help="Only embed files that have not been indexed yet (default).",
-        )
 
     def handle(self, *args, **options):
         import chromadb
-        from sentence_transformers import SentenceTransformer
         from apps.curriculum.models import CurriculumFile, Lesson
+        from apps.curriculum.rag_service import _embed_for_indexing
 
-        self.stdout.write(self.style.MIGRATE_HEADING("\n[*] Building Library RAG Index...\n"))
+        self.stdout.write(self.style.MIGRATE_HEADING(
+            "\n[*] Building Library RAG Index (Gemini embeddings — no local model)...\n"
+        ))
 
         # ── 1. Initialise ChromaDB ──────────────────────────────────────────────
         chroma_path = settings.CHROMADB_PATH
         Path(chroma_path).mkdir(parents=True, exist_ok=True)
         client = chromadb.PersistentClient(path=chroma_path)
 
-        if options["rebuild"]:
-            self.stdout.write("  [!] Rebuild mode -- deleting existing collections...")
-            for col in ["curriculum_lessons", "curriculum_files"]:
+        rebuild = options["rebuild"]
+
+        # Auto-detect dimension mismatch: old 384-dim → new 768-dim requires rebuild
+        if not rebuild:
+            for col_name in ("curriculum_lessons", "curriculum_files"):
                 try:
-                    client.delete_collection(col)
+                    col = client.get_collection(col_name)
+                    sample = col.peek(limit=1)
+                    if sample["embeddings"] and len(sample["embeddings"][0]) == 384:
+                        self.stdout.write(self.style.WARNING(
+                            "  [!] Old 384-dim embeddings detected — auto-enabling --rebuild "
+                            "to switch to Gemini 768-dim.\n"
+                        ))
+                        rebuild = True
+                        break
                 except Exception:
                     pass
+
+        if rebuild:
+            self.stdout.write("  [!] Rebuild mode — deleting existing collections...")
+            for col_name in ("curriculum_lessons", "curriculum_files"):
+                try:
+                    client.delete_collection(col_name)
+                    self.stdout.write(f"      Deleted: {col_name}")
+                except Exception:
+                    pass
+            self.stdout.write("")
 
         lessons_col = client.get_or_create_collection(
             name="curriculum_lessons",
@@ -61,25 +79,24 @@ class Command(BaseCommand):
             metadata={"hnsw:space": "cosine"},
         )
 
-        # ── 2. Load embedding model ─────────────────────────────────────────────
-        self.stdout.write("  [AI] Loading embedding model (all-MiniLM-L6-v2)...")
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        self.stdout.write(self.style.SUCCESS("  [OK] Model loaded.\n"))
+        self.stdout.write("  [AI] Embedding via Gemini text-embedding-004 (no model download needed)\n")
 
-        # ── 3. Embed Lessons (body_html + title + description) ──────────────────
+        # ── 2. Embed Lessons ───────────────────────────────────────────────────
         lessons = Lesson.objects.select_related("subject", "class_level").all()
         lesson_count = 0
+
         for lesson in lessons:
             doc_id = f"lesson_{lesson.id}"
-            if not options["rebuild"]:
+
+            if not rebuild:
                 existing = lessons_col.get(ids=[doc_id])
                 if existing["ids"]:
                     continue
 
-            text = f"{lesson.title}\n{lesson.description}\n{lesson.body_html}"
+            text = f"{lesson.title}\n{lesson.description or ''}\n{lesson.body_html or ''}"
             text = text[:4000]
 
-            embedding = model.encode(text).tolist()
+            embedding = _embed_for_indexing(text)
             lessons_col.upsert(
                 ids=[doc_id],
                 embeddings=[embedding],
@@ -89,30 +106,30 @@ class Command(BaseCommand):
                     "subject":     lesson.subject.subject_name if lesson.subject else "",
                     "class_level": lesson.class_level.level_name if lesson.class_level else "",
                     "type":        "lesson",
-                    "source":      lesson.source,
+                    "source":      lesson.source or "",
                 }],
             )
             lesson_count += 1
-            self.stdout.write(f"  [+] Lesson: {lesson.title[:60]}")
+            self.stdout.write(f"  [+] [lesson] {lesson.title[:65]}")
 
         self.stdout.write(self.style.SUCCESS(f"\n  {lesson_count} lessons embedded.\n"))
 
-        # ── 4. Embed CurriculumFiles (with real PDF/text content) ───────────────
+        # ── 3. Embed CurriculumFiles ───────────────────────────────────────────
         qs = CurriculumFile.objects.select_related("subject", "class_level")
-        if options.get("only_unindexed") and not options["rebuild"]:
+        if not rebuild:
             qs = qs.filter(is_indexed=False)
 
         file_count = 0
+
         for cf in qs:
             doc_id = f"file_{cf.id}"
 
-            # Try to extract actual file content
+            # Try to extract real file content (PDF text, etc.)
             file_text = self._extract_file_text(cf)
-            # Combine extracted text with metadata
-            meta_text = f"{cf.title}\n{cf.description}\n{' '.join(cf.tag_list)}"
+            meta_text = f"{cf.title}\n{cf.description or ''}\n{' '.join(cf.tag_list)}"
             text = (file_text or meta_text)[:8000]
 
-            embedding = model.encode(text[:4000]).tolist()
+            embedding = _embed_for_indexing(text[:4000])
             files_col.upsert(
                 ids=[doc_id],
                 embeddings=[embedding],
@@ -122,16 +139,18 @@ class Command(BaseCommand):
                     "file_type":   cf.file_type,
                     "subject":     cf.subject.subject_name if cf.subject else "",
                     "class_level": cf.class_level.level_name if cf.class_level else "",
-                    "tags":        cf.tags,
-                    "source":      cf.source,
+                    "tags":        cf.tags or "",
+                    "source":      cf.source or "",
                     "file_id":     str(cf.id),
                     "has_content": bool(file_text),
                 }],
             )
+
             cf.is_indexed = True
             cf.indexed_at = timezone.now()
             cf.save(update_fields=["is_indexed", "indexed_at"])
             file_count += 1
+
             content_flag = "[PDF text]" if file_text else "[meta only]"
             self.stdout.write(f"  [+] {content_flag} [{cf.file_type}] {cf.title[:55]}")
 
@@ -150,7 +169,6 @@ class Command(BaseCommand):
             return ""
 
         try:
-            from django.conf import settings
             import io
 
             file_name = str(cf.file)
@@ -169,7 +187,7 @@ class Command(BaseCommand):
                 raw = obj["Body"].read()
             else:
                 # Local media fallback
-                local_path = settings.MEDIA_ROOT / file_name
+                local_path = Path(settings.MEDIA_ROOT) / file_name
                 if not local_path.exists():
                     return ""
                 raw = local_path.read_bytes()
@@ -178,17 +196,16 @@ class Command(BaseCommand):
             if cf.file_type == "PDF" or file_name.lower().endswith(".pdf"):
                 from pypdf import PdfReader
                 reader = PdfReader(io.BytesIO(raw))
-                pages = []
-                for page in reader.pages[:30]:   # Max 30 pages
-                    pages.append(page.extract_text() or "")
+                pages = [page.extract_text() or "" for page in reader.pages[:30]]
                 return "\n".join(pages)
 
-            elif cf.file_type == "IMAGE" or file_name.lower().endswith((".jpg", ".jpeg", ".png")):
-                # Images can't be text-extracted here; embedding uses metadata only
-                return ""
+            elif cf.file_type in ("IMAGE",) or file_name.lower().endswith(
+                (".jpg", ".jpeg", ".png", ".gif", ".webp")
+            ):
+                return ""   # Images embedded by metadata only
 
             else:
-                # Try decoding as plain text (HTML, txt, etc.)
+                # Try as plain text / HTML
                 return raw.decode("utf-8", errors="ignore")[:8000]
 
         except Exception as e:

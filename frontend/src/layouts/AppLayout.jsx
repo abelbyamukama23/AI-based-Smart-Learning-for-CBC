@@ -3,33 +3,113 @@
  * Sidebar nav (desktop) + top bar (mobile) + page content area
  */
 
-import { useState } from "react";
-import { NavLink, Outlet } from "react-router-dom";
+import { useState, useRef, useEffect } from "react";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import useAuthStore from "../store/authStore";
 import { useAuth } from "../hooks/useAuth";
+import { getProfile } from "../services/auth.service";
+import {
+  CBCLogo,
+  MwalimuLogo,
+  IconGrid,
+  IconBook,
+  IconLibrary,
+  IconBot,
+  IconFeed,
+  IconLogout,
+  IconMenu,
+  IconSettings,
+  IconUser,
+  IconChevronDown,
+  IconCollaborate,
+  IconBilling,
+  IconCompetency,
+  IconUsage,
+  IconTokens,
+} from "../components/Icons";
 
-// ── Nav items per role ────────────────────────────────────────────────────────
-const LEARNER_NAV = [
-  { to: "/learner/dashboard", label: "Dashboard",  icon: <IconGrid /> },
-  { to: "/learner/lessons",   label: "Lessons",    icon: <IconBook /> },
-  { to: "/learner/library",   label: "Library",    icon: <IconLibrary /> },
-  { to: "/learner/tutor",     label: "Mwalimu",    icon: <IconBot /> },
-  { to: "/learner/feed",      label: "Feed",       icon: <IconFeed /> },
+// ── Nav groups per role ───────────────────────────────────────────────────────
+const LEARNER_NAV_GROUPS = [
+  {
+    title: "Platform",
+    items: [
+      { to: "/learner/dashboard",     label: "Dashboard",        icon: <IconGrid /> },
+      { to: "/learner/lessons",       label: "Lessons",          icon: <IconBook /> },
+      { to: "/learner/library",       label: "Library",          icon: <IconLibrary /> },
+      { to: "/learner/tutor",         label: "Mwalimu",          icon: <MwalimuLogo size={18} /> },
+      { to: "/learner/feed",          label: "Feed",             icon: <IconFeed /> },
+      { to: "/learner/collaborate",   label: "Collaborate",      icon: <IconCollaborate /> },
+      { to: "/learner/competencies",  label: "My Competencies",  icon: <IconCompetency /> },
+    ],
+  },
+  {
+    title: "Billing & Subscription",
+    items: [
+      { to: "/learner/billing",  label: "Billing", icon: <IconBilling /> },
+      { to: "/learner/usage",   label: "Usage",   icon: <IconUsage /> },
+      { to: "/learner/tokens",  label: "Tokens",  icon: <IconTokens /> },
+    ],
+  },
 ];
 
-const TEACHER_NAV = [
-  { to: "/teacher/dashboard", label: "Dashboard",  icon: <IconGrid /> },
-  { to: "/teacher/lessons",   label: "Lessons",    icon: <IconBook /> },
-  { to: "/teacher/library",   label: "Library",    icon: <IconLibrary /> },
-  { to: "/teacher/feed",      label: "Feed",       icon: <IconFeed /> },
+const SYSTEM_NAV = (role) => [
+  { to: `/${role}/settings`, label: "Settings", icon: <IconSettings size={18} /> },
+];
+
+const TEACHER_NAV_GROUPS = [
+  {
+    title: "Platform",
+    items: [
+      { to: "/teacher/dashboard", label: "Dashboard", icon: <IconGrid /> },
+      { to: "/teacher/lessons",   label: "Lessons",   icon: <IconBook /> },
+      { to: "/teacher/library",   label: "Library",   icon: <IconLibrary /> },
+      { to: "/teacher/feed",      label: "Feed",      icon: <IconFeed /> },
+    ],
+  },
+  {
+    title: "Billing & Subscription",
+    items: [
+      { to: "/teacher/billing", label: "Billing", icon: <IconBilling /> },
+    ],
+  },
 ];
 
 export function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const user = useAuthStore((s) => s.user);
-  const { logout, logoutLoading } = useAuth();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef(null);
 
-  const navItems = user?.role === "TEACHER" ? TEACHER_NAV : LEARNER_NAV;
+  const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
+  const { logout, logoutLoading } = useAuth();
+  const navigate = useNavigate();
+
+  // Fetch full profile on mount to hydrate the store with name/email
+  useEffect(() => {
+    let mounted = true;
+    getProfile().then((profileData) => {
+      if (mounted) {
+        setUser(profileData);
+      }
+    }).catch(console.error);
+    return () => { mounted = false; };
+  }, [setUser]);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const isTeacher = user?.role === "TEACHER";
+  const navGroups = isTeacher ? TEACHER_NAV_GROUPS : LEARNER_NAV_GROUPS;
+  const role = isTeacher ? "teacher" : "learner";
+  const systemItems = SYSTEM_NAV(role);
   const initials = getInitials(user);
 
   return (
@@ -39,16 +119,39 @@ export function AppLayout() {
         {/* Logo */}
         <div className="sidebar__logo">
           <CBCLogo />
-          <span className="sidebar__logo-text">CBC Learn</span>
+          <span className="sidebar__logo-text">Mwalimu AI</span>
         </div>
 
-        {/* Navigation */}
+        {/* Navigation — grouped */}
         <nav className="sidebar__nav" aria-label="Main navigation">
-          {navItems.map((item) => (
+          {navGroups.map((group) => (
+            <div key={group.title} className="sidebar__nav-group">
+              <span className="sidebar__nav-group-title">{group.title}</span>
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end
+                  className={({ isActive }) =>
+                    `sidebar__nav-item ${isActive ? "sidebar__nav-item--active" : ""}`
+                  }
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <span className="sidebar__nav-icon" aria-hidden>{item.icon}</span>
+                  <span className="sidebar__nav-label">{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        {/* System group — pinned to bottom */}
+        <div className="sidebar__nav-group sidebar__nav-group--system">
+          <span className="sidebar__nav-group-title">System</span>
+          {systemItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
-              end
               className={({ isActive }) =>
                 `sidebar__nav-item ${isActive ? "sidebar__nav-item--active" : ""}`
               }
@@ -58,31 +161,8 @@ export function AppLayout() {
               <span className="sidebar__nav-label">{item.label}</span>
             </NavLink>
           ))}
-        </nav>
-
-        {/* User profile + logout */}
-        <div className="sidebar__footer">
-          <div className="sidebar__user">
-            <div className="sidebar__avatar" aria-hidden>{initials}</div>
-            <div className="sidebar__user-info">
-              <span className="sidebar__user-name">
-                {user?.first_name
-                  ? `${user.first_name} ${user.last_name || ""}`.trim()
-                  : user?.email}
-              </span>
-              <span className="sidebar__user-role">{formatRole(user?.role)}</span>
-            </div>
-          </div>
-          <button
-            className="sidebar__logout"
-            onClick={logout}
-            disabled={logoutLoading}
-            aria-label="Sign out"
-            title="Sign out"
-          >
-            <IconLogout />
-          </button>
         </div>
+
       </aside>
 
       {/* ── Mobile overlay ──────────────────────────────────────────────── */}
@@ -107,12 +187,76 @@ export function AppLayout() {
           </button>
           <div className="topbar__logo">
             <CBCLogo size={24} />
-            <span>CBC Learn</span>
+            <span>Mwalimu AI</span>
           </div>
           <div className="topbar__avatar" aria-label={`Logged in as ${user?.email}`}>
             {initials}
           </div>
         </header>
+
+        {/* User Account Control (Desktop) */}
+        <div className="desktop-account-control" ref={dropdownRef}>
+          <button 
+            className="user-dropdown-trigger"
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            aria-haspopup="true"
+            aria-expanded={dropdownOpen}
+          >
+            <div className="sidebar__user-info">
+              <span className="sidebar__user-name">
+                {user?.first_name
+                  ? `${user.first_name} ${user.last_name || ""}`.trim()
+                  : user?.email}
+              </span>
+              <span className="sidebar__user-role">{formatRole(user?.role)}</span>
+            </div>
+            <div className="sidebar__avatar" aria-hidden>{initials}</div>
+            <IconChevronDown size={16} className="user-dropdown-chevron" />
+          </button>
+
+          {/* Dropdown Menu */}
+          {dropdownOpen && (
+            <div className="user-dropdown-menu">
+              <div className="user-dropdown-header">
+                <p className="user-dropdown-name">
+                  {user?.first_name
+                    ? `${user.first_name} ${user.last_name || ""}`.trim()
+                    : "User"}
+                </p>
+                <p className="user-dropdown-email">{user?.email}</p>
+              </div>
+              <button 
+                className="user-dropdown-item" 
+                onClick={() => {
+                  setDropdownOpen(false);
+                  navigate(`/${user?.role?.toLowerCase() || 'learner'}/profile`);
+                }}
+              >
+                <IconUser size={16} />
+                Manage Account
+              </button>
+              <button 
+                className="user-dropdown-item" 
+                onClick={() => {
+                  setDropdownOpen(false);
+                  navigate(`/${user?.role?.toLowerCase() || 'learner'}/settings`);
+                }}
+              >
+                <IconSettings size={16} />
+                Settings
+              </button>
+              <div className="user-dropdown-divider" />
+              <button
+                className="user-dropdown-item user-dropdown-item--danger"
+                onClick={logout}
+                disabled={logoutLoading}
+              >
+                <IconLogout size={16} />
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Page content */}
         <main className="app-content" id="main-content">
@@ -135,40 +279,4 @@ function getInitials(user) {
 function formatRole(role) {
   const map = { LEARNER: "Student", TEACHER: "Teacher", ADMIN: "Admin" };
   return map[role] || role;
-}
-
-// ── Inline SVG Icons ──────────────────────────────────────────────────────────
-function CBCLogo({ size = 32 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
-      <rect width="40" height="40" rx="10" fill="var(--color-primary-600)" />
-      <path d="M12 20C12 15.582 15.582 12 20 12C22.21 12 24.21 12.895 25.657 14.343"
-        stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M28 20C28 24.418 24.418 28 20 28C17.79 28 15.79 27.105 14.343 25.657"
-        stroke="white" strokeWidth="2.5" strokeLinecap="round" />
-      <circle cx="20" cy="20" r="3" fill="white" />
-    </svg>
-  );
-}
-
-function IconGrid() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>;
-}
-function IconBook() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>;
-}
-function IconLibrary() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="4" height="18" rx="1"/><rect x="8" y="3" width="4" height="18" rx="1"/><path d="M14 3l4 18"/><path d="M18 3l4 18"/></svg>;
-}
-function IconBot() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg>;
-}
-function IconFeed() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>;
-}
-function IconLogout() {
-  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>;
-}
-function IconMenu() {
-  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>;
 }

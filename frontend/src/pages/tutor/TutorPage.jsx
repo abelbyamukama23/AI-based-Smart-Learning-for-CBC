@@ -1,92 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { askTutor, getChatThread, getChatThreads } from "../../services/tutor.service";
 import { extractApiError } from "../../lib/utils";
+import { formatTime } from "./components/helpers";
+import { ChatSidebar } from "./components/ChatSidebar";
+import { ChatMessages } from "./components/ChatMessages";
+import { ChatInputBar } from "./components/ChatInputBar";
+import { ArtifactPanel } from "./components/ArtifactPanel";
+import { useVoiceInput } from "../../hooks/useVoiceInput";
+import { useImageAttachment } from "../../hooks/useImageAttachment";
+import useAuthStore from "../../store/authStore";
+import { MwalimuLogo } from "../../components/Icons";
+import styles from "./TutorPage.module.css";
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-function formatTime(ts) {
-  if (!ts) return "";
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-function formatDate(ts) {
-  if (!ts) return "";
-  const d = new Date(ts);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return "Today";
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-// ── Chat Bubble ────────────────────────────────────────────────────────────────
-function ChatBubble({ role, text, time, flagged }) {
-  const isUser = role === "user";
-  return (
-    <div className={`chat-bubble chat-bubble--${isUser ? "user" : "ai"}`}>
-      {!isUser && <div className="chat-bubble__avatar" aria-hidden>🤖</div>}
-      <div className="chat-bubble__body">
-        <div className="chat-bubble__text">
-          {flagged && <span className="chat-bubble__flag" title="Out of scope">⚠️ </span>}
-          {isUser ? (
-            text
-          ) : (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                h1: ({ children }) => <h1 className="md-h1">{children}</h1>,
-                h2: ({ children }) => <h2 className="md-h2">{children}</h2>,
-                h3: ({ children }) => <h3 className="md-h3">{children}</h3>,
-                strong: ({ children }) => <strong className="md-bold">{children}</strong>,
-                ul: ({ children }) => <ul className="md-ul">{children}</ul>,
-                ol: ({ children }) => <ol className="md-ol">{children}</ol>,
-                li: ({ children }) => <li className="md-li">{children}</li>,
-                hr: () => <hr className="md-hr" />,
-                table: ({ children }) => (
-                  <div className="md-table-wrapper">
-                    <table className="md-table">{children}</table>
-                  </div>
-                ),
-                thead: ({ children }) => <thead className="md-thead">{children}</thead>,
-                tbody: ({ children }) => <tbody>{children}</tbody>,
-                tr: ({ children }) => <tr className="md-tr">{children}</tr>,
-                th: ({ children }) => <th className="md-th">{children}</th>,
-                td: ({ children }) => <td className="md-td">{children}</td>,
-                p: ({ children }) => <p className="md-p">{children}</p>,
-                code: ({ children }) => <code className="md-code">{children}</code>,
-              }}
-            >
-              {text}
-            </ReactMarkdown>
-          )}
-        </div>
-        <span className="chat-bubble__time">{time}</span>
-      </div>
-    </div>
-  );
-}
-
-// ── Main Page ──────────────────────────────────────────────────────────────────
 export default function TutorPage() {
   const location = useLocation();
 
   // ── Library context (passed from /library via router state) ──
   const libraryFile = location.state?.libraryFile ?? null;
 
+  // ── User context ──
+  const user = useAuthStore((s) => s.user);
+  const firstName = user?.first_name ? ` ${user.first_name}` : "";
+
   // Build a context-aware welcome message when a library file is provided
   const welcomeText = libraryFile
-    ? `Habari! I'm **Mwalimu**. I can see you want to study **"${libraryFile.title}"**${
+    ? `Habari${firstName}! I'm **Mwalimu**. I can see you want to study **"${libraryFile.title}"**${
         libraryFile.subject_name ? ` (${libraryFile.subject_name})` : ""
       }. I've already loaded this material — ask me anything about it and I'll guide you through it step by step. 📖`
-    : "Habari! I'm **Mwalimu**. Ask me anything about your Uganda CBC curriculum — Mathematics, Science, English, SST, and more. Every question is a chance to learn something new! 🌱";
+    : `Habari${firstName}! I'm **Mwalimu**. Ask me anything about your Uganda CBC curriculum — Mathematics, Science, English, SST, and more. Every question is a chance to learn something new! 🌱`;
 
   // ── Thread state ──
-  const [threads, setThreads]       = useState([]);
+  const queryClient = useQueryClient();
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const { data: threads = [], isLoading: threadsLoading } = useQuery({
+    queryKey: ["chatThreads", searchQuery],
+    queryFn: () => getChatThreads(searchQuery),
+  });
+
   const [activeThreadId, setActiveThreadId] = useState(null);
-  const [threadsLoading, setThreadsLoading] = useState(true);
 
   // ── Message state ──
   const [messages, setMessages] = useState([
@@ -106,26 +60,23 @@ export default function TutorPage() {
   const [error, setError]               = useState(null);
   const [sidebarOpen, setSidebarOpen]   = useState(true);
   const [libraryBannerVisible, setLibraryBannerVisible] = useState(!!libraryFile);
+  const [mode, setMode]                 = useState("default");
+  const [activeArtifact, setActiveArtifact] = useState(null);
 
-  // ── Voice input state ──
-  const [listening, setListening]       = useState(false);
-  const recognitionRef                  = useRef(null);
+  // ── Custom Hooks for Input ──
+  const { listening, toggleVoice } = useVoiceInput({
+    onResult: (transcript) => setQuery((prev) => (prev ? prev + " " + transcript : transcript)),
+    onError: (msg) => setError(msg),
+  });
 
-  // ── Image upload state ──
-  const [imageFile, setImageFile]       = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
-  const imageInputRef                   = useRef(null);
+  const { imageFile, imagePreview, imageInputRef, handleImageChange, clearImage } = useImageAttachment();
+
+  // ── Abort / retry state ──
+  const abortControllerRef              = useRef(null);   // holds current AbortController
+  const [abortedMsgId, setAbortedMsgId] = useState(null); // id of last aborted user msg
 
   const bottomRef = useRef(null);
   const inputRef  = useRef(null);
-
-  // ── Load thread list ───────────────────────────────────────────────────────
-  useEffect(() => {
-    getChatThreads()
-      .then(setThreads)
-      .catch(() => {})
-      .finally(() => setThreadsLoading(false));
-  }, []);
 
   // ── Scroll to bottom on new message ───────────────────────────────────────
   useEffect(() => {
@@ -180,80 +131,67 @@ export default function TutorPage() {
     ]);
     setError(null);
     setQuery("");
-    setImageFile(null);
-    setImagePreview(null);
+    clearImage();
     inputRef.current?.focus();
-  }, []);
+  }, [clearImage]);
 
-  // ── Voice input ───────────────────────────────────────────────────────────
-  const toggleVoice = useCallback(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError("Voice input is not supported in this browser. Please use Chrome or Edge.");
-      return;
-    }
-    if (listening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    const rec = new SpeechRecognition();
-    rec.lang = "en-UG";
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.onresult = (e) => {
-      const transcript = e.results[0][0].transcript;
-      setQuery((prev) => (prev ? prev + " " + transcript : transcript));
-    };
-    rec.onerror = () => setListening(false);
-    rec.onend   = () => setListening(false);
-    rec.start();
-    recognitionRef.current = rec;
-    setListening(true);
-  }, [listening]);
-
-  // ── Image picker ──────────────────────────────────────────────────────────
-  const handleImageChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-    inputRef.current?.focus();
+  // ── Abort sending ──────────────────────────────────────────────────────────
+  const abortSending = () => {
+    abortControllerRef.current?.abort();
   };
 
-  const clearImage = () => {
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImageFile(null);
-    setImagePreview(null);
-    if (imageInputRef.current) imageInputRef.current.value = "";
+  // ── Retry last aborted query ───────────────────────────────────────────────
+  const retryQuery = (text) => {
+    setAbortedMsgId(null);
+    setError(null);
+    setQuery(text);
+    // Small tick so state updates before synthetic submit
+    setTimeout(() => {
+      const fakeEvent = { preventDefault: () => {} };
+      sendMessage(fakeEvent, text);
+    }, 0);
   };
 
   // ── Send a message ─────────────────────────────────────────────────────────
-  const sendMessage = async (e) => {
-    e.preventDefault();
-    const text = query.trim();
+  const sendMessage = async (e, overrideText) => {
+    if (e?.preventDefault) e.preventDefault();
+    const text = (overrideText ?? query).trim();
     if ((!text && !imageFile) || sending) return;
 
+    // Create a fresh AbortController for this request
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     const sentImage = imageFile;
-    setQuery("");
+    if (!overrideText) setQuery("");
     setError(null);
+    setAbortedMsgId(null);
     clearImage();
 
+    const userMsgId = `u-${Date.now()}`;
+    const aiMsgId = `a-${Date.now()}`;
+    
     const userMsg = {
-      id: `u-${Date.now()}`,
+      id: userMsgId,
       role: "user",
       text: text || "📎 [Shared an image of their work]",
       imagePreview: sentImage ? URL.createObjectURL(sentImage) : null,
       time: formatTime(new Date().toISOString()),
     };
-    setMessages((prev) => [...prev, userMsg]);
+    
+    const initialAiMsg = {
+      id: aiMsgId,
+      role: "ai",
+      text: "",
+      time: formatTime(new Date().toISOString()),
+    };
+    
+    setMessages((prev) => [...prev, userMsg, initialAiMsg]);
     setSending(true);
 
     try {
       setStreamingStatus("Thinking...");
 
-      // Prefix the query with library context on the FIRST message of a library session
-      // so Mwalimu knows which material is being studied
       const isFirstMessage = messages.filter((m) => m.role === "user").length === 0;
       const queryWithContext =
         libraryFile && isFirstMessage
@@ -270,108 +208,120 @@ export default function TutorPage() {
         activeThreadId,
         null,
         (data) => {
-          if (data.type === "status")       setStreamingStatus(data.message);
-          if (data.type === "tool_call")    setStreamingStatus(`🔍 Looking up: ${data.name.replace(/_/g, " ")}...`);
+          if (data.type === "status")         setStreamingStatus(data.message);
+          if (data.type === "tool_call")      setStreamingStatus(`🔍 Looking up: ${data.name.replace(/_/g, " ")}...`);
           if (data.type === "thread_created") setActiveThreadId(data.thread_id);
+          if (data.type === "chunk") {
+            setMessages((prev) => {
+              const newMsgs = [...prev];
+              const aiMsgIndex = newMsgs.findIndex(m => m.id === aiMsgId);
+              if (aiMsgIndex !== -1) {
+                newMsgs[aiMsgIndex] = { ...newMsgs[aiMsgIndex], text: newMsgs[aiMsgIndex].text + data.content };
+              }
+              return newMsgs;
+            });
+          }
         },
-        sentImage
+        sentImage,
+        mode,
+        controller.signal   // ← pass abort signal
       );
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}`,
-          role: "ai",
-          text: result.response || "I wasn't able to generate a response. Please try again.",
-          time: formatTime(new Date().toISOString()),
-          flagged: result.is_out_of_scope,
-        },
-      ]);
+      // Overwrite the streamed text with the final sanitized response
+      setMessages((prev) => {
+        const newMsgs = [...prev];
+        const aiMsgIndex = newMsgs.findIndex(m => m.id === aiMsgId);
+        if (aiMsgIndex !== -1) {
+          newMsgs[aiMsgIndex] = {
+            ...newMsgs[aiMsgIndex],
+            text: result.response || "I wasn't able to generate a response. Please try again.",
+            flagged: result.is_out_of_scope,
+          };
+        }
+        return newMsgs;
+      });
 
       if (result.threadId) {
         setActiveThreadId(result.threadId);
-        getChatThreads().then(setThreads).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ["chatThreads"] });
       }
     } catch (err) {
-      setError(extractApiError(err));
+      if (err.name === "AbortError" || String(err.message).includes("abort")) {
+        // User intentionally stopped — show retry on that message
+        setAbortedMsgId(userMsgId);
+        setError("Stopped. Use ↺ Retry to resend your question.");
+      } else {
+        setAbortedMsgId(userMsgId);
+        setError(extractApiError(err) + " — Use ↺ Retry to try again.");
+      }
     } finally {
       setSending(false);
       setStreamingStatus("");
+      abortControllerRef.current = null;
       inputRef.current?.focus();
     }
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="tutor-page">
-      {/* ── Sidebar ────────────────────────────────────────────────────────── */}
-      <aside className={`tutor-sidebar ${sidebarOpen ? "tutor-sidebar--open" : "tutor-sidebar--closed"}`}>
-        <div className="tutor-sidebar__header">
-          <button
-            className="btn btn-primary btn-sm tutor-sidebar__new-btn"
-            onClick={startNewChat}
-            id="new-chat-btn"
-          >
-            ＋ New Chat
-          </button>
-          <button
-            className="btn btn-ghost btn-icon tutor-sidebar__toggle"
-            onClick={() => setSidebarOpen((o) => !o)}
-            aria-label="Toggle sidebar"
-          >
-            {sidebarOpen ? "◀" : "▶"}
-          </button>
-        </div>
+    <div className={`${styles["tutor-layout"]} ${activeArtifact ? styles["tutor-layout--artifact-open"] : ""} ${!sidebarOpen ? styles["tutor-layout--sidebar-closed"] : ""}`}>
+      <ChatSidebar
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        threadsLoading={threadsLoading}
+        threads={threads}
+        activeThreadId={activeThreadId}
+        startNewChat={startNewChat}
+        loadThread={loadThread}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+      />
 
-        {sidebarOpen && (
-          <div className="tutor-sidebar__list">
-            {threadsLoading ? (
-              <p className="tutor-sidebar__hint">Loading chats…</p>
-            ) : threads.length === 0 ? (
-              <p className="tutor-sidebar__hint">No conversations yet. Start one!</p>
-            ) : (
-              threads.map((t) => (
-                <button
-                  key={t.id}
-                  className={`tutor-thread-item ${t.id === activeThreadId ? "tutor-thread-item--active" : ""}`}
-                  onClick={() => loadThread(t.id)}
-                  id={`thread-${t.id}`}
-                >
-                  <span className="tutor-thread-item__title">{t.title || "Untitled Chat"}</span>
-                  <span className="tutor-thread-item__meta">
-                    {formatDate(t.updated_at)} · {t.interaction_count} {t.interaction_count === 1 ? "turn" : "turns"}
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        )}
-      </aside>
-
-      {/* ── Chat Area ──────────────────────────────────────────────────────── */}
-      <div className="tutor-chat">
+      <div className={styles["tutor-chat"]}>
         {/* Header */}
-        <div className="tutor-chat__header">
-          <div className="tutor-chat__title">
-            <span className="tutor-chat__avatar">🤖</span>
+        <div className={styles["tutor-chat__header"]}>
+          <div className={styles["tutor-chat__title"]}>
+            <span className={styles["tutor-chat__avatar"]}>
+              <MwalimuLogo size={32} />
+            </span>
             <div>
-              <h1 className="tutor-chat__name">Mwalimu</h1>
-              <p className="tutor-chat__subtitle">Uganda CBC AI Tutor</p>
+              <h1 className={styles["tutor-chat__name"]}>Mwalimu</h1>
+              <p className={styles["tutor-chat__subtitle"]}>Uganda CBC AI Tutor</p>
             </div>
+          </div>
+          <div className={styles["tutor-chat__mode-selector"]}>
+            <button 
+              className={`${styles["mode-btn"]} ${mode === 'default' ? styles["mode-btn--active"] : ''}`}
+              onClick={() => setMode('default')}
+            >
+              Default
+            </button>
+            <button 
+              className={`${styles["mode-btn"]} ${mode === 'expert' ? styles["mode-btn--active"] : ''}`}
+              onClick={() => setMode('expert')}
+            >
+              Expert
+            </button>
+            <button 
+              className={`${styles["mode-btn"]} ${mode === 'professor' ? styles["mode-btn--active"] : ''}`}
+              onClick={() => setMode('professor')}
+            >
+              Professor
+            </button>
           </div>
         </div>
 
         {/* ── Library context banner ──────────────────────────────────────── */}
         {libraryFile && libraryBannerVisible && (
-          <div className="tutor-library-banner">
-            <span className="tutor-library-banner__icon">📚</span>
-            <div className="tutor-library-banner__text">
+          <div className={styles["tutor-library-banner"]}>
+            <span className={styles["tutor-library-banner__icon"]}>📚</span>
+            <div className={styles["tutor-library-banner__text"]}>
               <strong>Reading:</strong> {libraryFile.title}
               {libraryFile.subject_name && (
-                <span className="tutor-library-banner__subject"> · {libraryFile.subject_name}</span>
+                <span className={styles["tutor-library-banner__subject"]}> · {libraryFile.subject_name}</span>
               )}
               {libraryFile.class_level_name && (
-                <span className="tutor-library-banner__level"> · {libraryFile.class_level_name}</span>
+                <span className={styles["tutor-library-banner__level"]}> · {libraryFile.class_level_name}</span>
               )}
             </div>
             {libraryFile.file_url && (
@@ -379,14 +329,14 @@ export default function TutorPage() {
                 href={libraryFile.file_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="tutor-library-banner__link"
+                className={styles["tutor-library-banner__link"]}
                 title="Open file in new tab"
               >
                 ⬇ Open
               </a>
             )}
             <button
-              className="tutor-library-banner__close"
+              className={styles["tutor-library-banner__close"]}
               onClick={() => setLibraryBannerVisible(false)}
               aria-label="Dismiss library context banner"
             >
@@ -395,107 +345,70 @@ export default function TutorPage() {
           </div>
         )}
 
-        {/* Messages */}
-        <div
-          className="chat-messages"
-          aria-live="polite"
-          aria-label="Chat conversation"
-        >
-          {messages.map((msg) => (
-            <ChatBubble
-              key={msg.id}
-              role={msg.role}
-              text={msg.text}
-              time={msg.time}
-              flagged={msg.flagged}
-            />
-          ))}
-
-          {/* Live status indicator */}
-          {sending && (
-            <div className="chat-bubble chat-bubble--ai">
-              <div className="chat-bubble__avatar" aria-hidden>🤖</div>
-              <div className="chat-bubble__body">
-                <div className="typing-indicator" aria-label="Mwalimu is thinking">
-                  {streamingStatus && (
-                    <span className="streaming-status-text">{streamingStatus}</span>
-                  )}
-                  <span /><span /><span />
-                </div>
-              </div>
+        {messages.length === 0 ? (
+          /* ── Empty state: welcome hero fills remaining space ── */
+          <div className={styles["chat-welcome"]}>
+            <div className={styles["chat-welcome__hero"]}>
+              <MwalimuLogo size={80} className={styles["chat-welcome__logo"]} />
+              <h2 className={styles["chat-welcome__title"]}>What would you like to learn today?</h2>
+              <p className={styles["chat-welcome__subtitle"]}>
+                Ask Mwalimu anything about the CBC curriculum — science, maths, languages, and more.
+              </p>
             </div>
-          )}
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Error */}
-        {error && <div className="chat-error" role="alert">{error}</div>}
-
-        {/* Image preview strip */}
-        {imagePreview && (
-          <div className="chat-image-preview">
-            <img src={imagePreview} alt="Your attached work" className="chat-image-preview__img" />
-            <button type="button" className="chat-image-preview__remove" onClick={clearImage} aria-label="Remove image">✕</button>
           </div>
+        ) : (
+          /* ── Active state: messages scroll ── */
+          <>
+            <ChatMessages
+              messages={messages}
+              sending={sending}
+              streamingStatus={streamingStatus}
+              abortedMsgId={abortedMsgId}
+              retryQuery={retryQuery}
+              bottomRef={bottomRef}
+              onOpenArtifact={(type, content, title) => setActiveArtifact({ type, content, title })}
+            />
+
+            {error && (
+              <div className={styles["chat-error"]} role="alert">
+                {error}
+                <button onClick={() => setError(null)} style={{marginLeft: "8px", background:"none", border:"none", cursor:"pointer"}}>✕</button>
+              </div>
+            )}
+          </>
         )}
 
-        {/* Input bar */}
-        <form className="chat-input-bar" onSubmit={sendMessage} aria-label="Send a message to Mwalimu">
-          {/* Hidden file input */}
-          <input
-            ref={imageInputRef}
-            type="file"
-            id="tutor-image-input"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={handleImageChange}
+        {/* ── Input bar — always pinned to the bottom of the chat panel ── */}
+        <div className={`${styles["chat-input-section"]} ${sending ? styles["chat-input-section--collapsed"] : ""}`}>
+          {imagePreview && (
+            <div className={styles["chat-image-preview"]}>
+              <img src={imagePreview} alt="Your attached work" className={styles["chat-image-preview__img"]} />
+              <button type="button" className={styles["chat-image-preview__remove"]} onClick={clearImage} aria-label="Remove image">✕</button>
+            </div>
+          )}
+          <ChatInputBar
+            imageFile={imageFile}
+            imageInputRef={imageInputRef}
+            handleImageChange={handleImageChange}
+            listening={listening}
+            toggleVoice={toggleVoice}
+            query={query}
+            setQuery={setQuery}
+            sendMessage={sendMessage}
+            sending={sending}
+            abortSending={abortSending}
+            inputRef={inputRef}
           />
+        </div>
 
-          {/* Image upload button */}
-          <button
-            type="button"
-            id="tutor-image-btn"
-            className={`chat-input-bar__icon-btn${imageFile ? " chat-input-bar__icon-btn--active" : ""}`}
-            onClick={() => imageInputRef.current?.click()}
-            aria-label="Upload image of your work"
-            title="Attach a photo of your handwritten work"
-            disabled={sending}
-          >📷</button>
-
-          {/* Mic button */}
-          <button
-            type="button"
-            id="tutor-mic-btn"
-            className={`chat-input-bar__icon-btn${listening ? " chat-input-bar__icon-btn--listening" : ""}`}
-            onClick={toggleVoice}
-            aria-label={listening ? "Stop recording" : "Start voice input"}
-            title={listening ? "Listening… click to stop" : "Ask by voice"}
-            disabled={sending}
-          >🎤</button>
-
-          <textarea
-            ref={inputRef}
-            id="tutor-query"
-            className="chat-input-bar__input"
-            placeholder={listening ? "Listening… speak your question" : "Ask Mwalimu, or attach a photo of your work…"}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(e); }
-            }}
-            rows={2}
-            aria-label="Your question"
-            disabled={sending}
-          />
-          <button
-            type="submit"
-            id="tutor-send-btn"
-            className="chat-input-bar__send btn btn-primary btn-sm"
-            disabled={sending || (!query.trim() && !imageFile)}
-            aria-label="Send message"
-          >{sending ? "…" : "Send ➤"}</button>
-        </form>
       </div>
+
+      {activeArtifact && (
+        <ArtifactPanel
+          artifact={activeArtifact}
+          onClose={() => setActiveArtifact(null)}
+        />
+      )}
     </div>
   );
 }
